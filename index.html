@@ -104,7 +104,11 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:14px 0}
 .sheet .foot{display:flex;align-items:center;gap:14px;margin-top:18px;padding-top:12px;border-top:1px solid var(--line);font-size:11.5px;color:var(--dim2)}
 .preview{font-family:var(--serif);font-size:17px;line-height:2;margin-top:14px;white-space:normal}
 .preview p{margin:0 0 1em}
-.preview .ref{color:var(--accent);border-bottom:1px dashed var(--accent);cursor:pointer}
+.preview .ref{display:inline-block;padding:0 6px;margin:0 1px;border:1px solid var(--accent);border-radius:4px;background:var(--chip);
+  color:var(--accent);font-size:.92em;line-height:1.6;cursor:pointer;text-decoration:none;vertical-align:baseline}
+.preview .ref:hover{background:var(--accent);color:#fff8ef}
+.refbox{display:inline-flex;align-items:center;gap:4px;padding:0 5px;border:1px solid var(--accent);border-radius:4px;
+  background:var(--chip);color:var(--accent);font-size:.9em;line-height:1.7;margin:0 2px}
 .preview .men{background:#96583a14;border-radius:2px;padding:0 1px}
 
 .ctx{background:var(--panel);border-left:1px solid var(--line);overflow-y:auto;padding:16px 16px 40px}
@@ -728,13 +732,8 @@ function sheetHTML(n){
     +'<button class="btn sm ghost" data-act="zen" title="专注模式">'+(DB.ui.zen?'⤡':'⤢')+'</button>'
     +'<button class="btn sm ghost" data-act="nodeMenu">⋯</button></div>';
   h+='<input class="title" data-bind="node.title" value="'+esc(n.title)+'" placeholder="章回标题">';
-  h+='<div style="display:flex;gap:5px;align-items:center;margin:8px 0 0">'
-    +FUNCS.map(f=>'<button class="btn sm '+(n.func===f?'primary':'ghost')+'" data-act="setFunc" data-v="'+f+'">'+f+'</button>').join('')
-    +'<div style="flex:1"></div><span class="mini" style="margin-right:4px">张力</span>'
-    +'<span class="func">'+[1,2,3,4,5].map(i=>'<button data-act="setInt" data-v="'+i+'" class="'+(n.intensity>=i?'on':'')+'">'+i+'</button>').join('')+'</span>'
-    +'</div>';
-  h+='<label class="f" style="margin-top:16px"><span>'+(isPart?'本幕简介（会显示在幕下，不占正文字数）':'一句话概要')+'</span>'
-    +'<textarea data-bind="node.summary" rows="'+(isPart?6:2)+'">'+esc(n.summary||'')+'</textarea>'
+  h+='<label class="f" style="margin-top:16px"><span>'+(isPart?'本幕简介（会显示在幕下，不占正文字数）':'概要')+'</span>'
+    +'<textarea data-bind="node.summary" rows="'+(isPart?6:3)+'" placeholder="'+(isPart?'这一幕讲什么':'这一段讲什么，几句话说清')+'">'+esc(n.summary||'')+'</textarea>'
     +'</label>';
   if(DB.ui.preview){
     h+='<div class="preview" id="preview">'+richText(n.text)+'</div>';
