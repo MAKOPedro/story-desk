@@ -565,7 +565,7 @@ function restoreVersion(n){
   if(!confirm('回到 v'+n+'（'+dt(v.at)+'）？\n当前内容会先存成一个新版本。')) return;
   makeVersion('恢复前');
   try{ DB=JSON.parse(v.data); }catch(e){ return warn('这个版本读不出来'); }
-  DB.ui=Object.assign({tab:'write',nodeId:null,entryId:null,charId:null,dlgId:null,questId:null,charBoard:false,libBoard:false,theme:'paper',filter:'',q:'',preview:false,zen:false,sub:'outline'},DB.ui||{});
+  DB.ui=Object.assign({tab:'write',nodeId:null,entryId:null,charId:null,dlgId:null,questId:null,charBoard:false,libBoard:false,itemSrv:'',itemSel:null,itemQ:'',theme:'paper',filter:'',q:'',preview:false,zen:false,sub:'outline'},DB.ui||{});
   if(!DB.sync) DB.sync={};
   DB.sync.lastVersion=n;
   DB.entries=(DB.entries||[]).map(fixEntry).filter(Boolean);
@@ -623,14 +623,14 @@ function checks(){
   return out;
 }
 
-const TABS=[['write','写作'],['outline','大纲'],['chars','人物'],['map','地图'],['dlg','对话'],['quest','任务'],['lib','设定'],['setup','设置']];
+const TABS=[['write','写作'],['outline','大纲'],['chars','人物'],['map','地图'],['items','物品'],['dlg','对话'],['quest','任务'],['lib','设定'],['setup','设置']];
 
 function render(){
   document.documentElement.dataset.theme=DB.ui.theme||'paper';
   const tb=$('.themebtn'); if(tb) tb.textContent=(DB.ui.theme==='night')?'纸':'夜';
   $('#ptitle').textContent=DB.meta.title||'未命名';
   $('#nav').innerHTML=TABS.map(t=>'<button data-act="tab" data-tab="'+t[0]+'" class="'+(DB.ui.tab===t[0]?'on':'')+'">'+t[1]+'</button>').join('');
-  const m={write:viewWrite,outline:viewOutline,chars:viewChars,map:viewMap,dlg:viewDlg,quest:viewQuest,lib:viewLib,setup:viewSetup}[DB.ui.tab]||viewWrite;
+  const m={write:viewWrite,outline:viewOutline,chars:viewChars,map:viewMap,items:viewItems,dlg:viewDlg,quest:viewQuest,lib:viewLib,setup:viewSetup}[DB.ui.tab]||viewWrite;
   const oldWrap=$('#view .mapwrap');
   const keepX=oldWrap?oldWrap.scrollLeft:0, keepY=oldWrap?oldWrap.scrollTop:0;
   try{ $('#view').innerHTML=m(); }
@@ -1197,6 +1197,123 @@ document.addEventListener('dblclick',function(e){
   ensureMap().updatedAt=now();
   touch(); render(); DB.ui.entryId=en.id; renderDrawer();
 });
+
+/* ---------- 物品（接本地编辑器） ---------- */
+const ITEM_SRV='http://127.0.0.1:5128';
+let ITEMDOC=null, ITEMOPTS=null, ITEMDIRTY=false;
+function itemSrv(){ return String((DB.ui&&DB.ui.itemSrv)||ITEM_SRV).replace(/\/+$/,''); }
+async function itemFetch(path,opt){
+  let res;
+  try{ res=await fetch(itemSrv()+path,opt||{}); }
+  catch(e){ throw new Error('连不上本地编辑器（'+itemSrv()+'）——先运行 Tools/ItemEditor/start_item_editor.ps1'); }
+  const txt=await res.text();
+  let data=null;
+  try{ data=txt?JSON.parse(txt):null; }catch(e){ data=txt; }
+  if(!res.ok){
+    const err=new Error((data&&(data.detail||data.title))||('HTTP '+res.status));
+    err.status=res.status; err.data=data;
+    throw err;
+  }
+  return data;
+}
+function curItem(){
+  if(!ITEMDOC||!Array.isArray(ITEMDOC.items)) return null;
+  return ITEMDOC.items.find(x=>x.id===DB.ui.itemSel)||null;
+}
+function itemName(it){
+  const z=it.localization&&it.localization.chineseSimplified;
+  return (z&&z.name)||it.key||('#'+it.id);
+}
+function viewItems(){
+  let h='<div class="boardpage"><div class="mtoolbar">'
+    +'<b style="font-family:var(--serif);letter-spacing:.1em">物品</b>'
+    +'<input id="itemSrv" type="text" value="'+esc(itemSrv())+'" placeholder="http://127.0.0.1:5128" style="width:230px">'
+    +'<button class="btn sm" data-act="itemConnect">连接</button>'
+    +(ITEMDOC?(
+        '<span class="mini">'+(ITEMDOC.items||[]).length+' 个物品'+(ITEMDIRTY?' · 有未保存修改':'')+'</span>'
+        +'<div style="flex:1"></div>'
+        +'<button class="btn sm" data-act="itemValidate">校验</button>'
+        +'<button class="btn sm primary" data-act="itemSave">保存到 items.yaml</button>'
+        +'<button class="btn sm" data-act="itemAdd">＋ 物品</button>'
+      ):('<span class="mini">先启动本地编辑器，再点连接</span>'))
+    +'</div>';
+  if(!ITEMDOC){
+    h+='<div class="empty">还没有连接<br><span class="mini">在项目根目录运行：powershell -ExecutionPolicy Bypass -File Tools/ItemEditor/start_item_editor.ps1<br>然后点上面的「连接」</span></div>';
+    return h+'</div>';
+  }
+  const list=ITEMDOC.items||[];
+  const it=curItem();
+  h+='<div class="lib" style="grid-template-columns:300px minmax(0,1fr)"><aside class="rail">';
+  h+='<input type="search" data-bind="ui.itemQ" value="'+esc(DB.ui.itemQ||'')+'" placeholder="搜索 id / key / 名称" style="margin:0 8px 8px;width:calc(100% - 16px)">';
+  const q=(DB.ui.itemQ||'').toLowerCase();
+  list.filter(x=>!q||String(x.id).indexOf(q)>=0||(x.key||'').toLowerCase().indexOf(q)>=0||itemName(x).toLowerCase().indexOf(q)>=0)
+    .forEach(x=>{
+      h+='<div class="rit'+(it&&it.id===x.id?' on':'')+'" data-act="itemSel" data-id="'+x.id+'" style="flex-direction:column;align-items:flex-start;gap:1px">'
+        +'<span style="font-size:12.5px">'+esc(itemName(x))+'</span>'
+        +'<span class="mini">#'+x.id+' · '+esc(x.key||'')+' · '+esc(x.rarity||'')+'</span></div>';
+    });
+  h+='</aside><div class="libmain" style="padding:18px 22px">';
+  if(!it){ h+='<div class="empty">左边选一个物品</div>'; }
+  else{
+    const L=it.localization||{}; const zh=L.chineseSimplified||{}; const en=L.english||{};
+    const opts=ITEMOPTS||{};
+    const sel=(name,val,arr)=>'<select data-item-field="'+name+'">'+(arr||[]).map(v=>'<option'+(v===val?' selected':'')+'>'+esc(v)+'</option>').join('')+'</select>';
+    h+='<div class="dgrid">';
+    h+=fld('ID','<input type="number" data-item-field="id" value="'+it.id+'">');
+    h+=fld('key','<input type="text" data-item-field="key" value="'+esc(it.key||'')+'">');
+    h+=fld('本地化 name_key','<input type="text" data-item-field="nameKey" value="'+esc(it.nameKey||'')+'">');
+    h+=fld('本地化 desc_key','<input type="text" data-item-field="descriptionKey" value="'+esc(it.descriptionKey||'')+'">');
+    h+=fld('图标 icon_key','<input type="text" data-item-field="iconKey" value="'+esc(it.iconKey||'')+'">');
+    h+=fld('槽位 slot_type',sel('slotType',it.slotType,opts.slotTypes));
+    h+=fld('稀有度 rarity',sel('rarity',it.rarity,opts.rarities));
+    h+=fld('默认朝向',sel('defaultDirection',it.defaultDirection,opts.directions));
+    h+=fld('堆叠上限','<input type="number" data-item-field="maxStack" value="'+(it.maxStack||0)+'">');
+    h+=fld('重量','<input type="number" step="0.1" data-item-field="weight" value="'+(it.weight||0)+'">');
+    h+=fld('价格','<input type="number" data-item-field="price" value="'+(it.price||0)+'">');
+    h+=fld('通用 damage','<input type="number" data-item-field="damage" value="'+(it.damage||0)+'">');
+    h+='</div>';
+    h+='<h5>本地化</h5><div class="dgrid">';
+    h+=fld('中文名','<input type="text" data-item-field="localization.chineseSimplified.name" value="'+esc(zh.name||'')+'">');
+    h+=fld('英文名','<input type="text" data-item-field="localization.english.name" value="'+esc(en.name||'')+'">');
+    h+='</div>';
+    h+=fld('中文描述','<textarea rows="2" data-item-field="localization.chineseSimplified.description">'+esc(zh.description||'')+'</textarea>');
+    h+=fld('英文描述','<textarea rows="2" data-item-field="localization.english.description">'+esc(en.description||'')+'</textarea>');
+    h+='<h5>占用格</h5>'+occupancyHTML(it);
+    if(it.weapon){
+      const w=it.weapon;
+      h+='<h5>武器</h5><div class="dgrid">';
+      h+=fld('weapon_id','<input type="text" data-item-field="weapon.weaponId" value="'+esc(w.weaponId||'')+'">');
+      h+=fld('family',sel('weapon.family',w.family,opts.weaponFamilies));
+      h+=fld('action_type',sel('weapon.actionType',w.actionType,opts.actionTypes));
+      h+=fld('基础伤害','<input type="number" data-item-field="weapon.baseDamage" value="'+(w.baseDamage||0)+'">');
+      h+=fld('攻速倍率','<input type="number" step="0.05" data-item-field="weapon.attackSpeedMultiplier" value="'+(w.attackSpeedMultiplier||0)+'">');
+      h+=fld('元素',sel('weapon.element',w.element,opts.elements));
+      h+=fld('元素伤害','<input type="number" data-item-field="weapon.elementalDamage" value="'+(w.elementalDamage||0)+'">');
+      h+='</div>';
+    }
+    h+='<h5>Tooltip</h5><div class="mini">'+(it.tooltip&&it.tooltip.rows?it.tooltip.rows.length:0)+' 行。复杂 Tooltip 请在原编辑器里改，这里不覆盖。</div>';
+    h+='<details style="margin-top:14px"><summary class="mini" style="cursor:pointer">高级：原始 JSON（改完点「应用」）</summary>'
+      +'<textarea id="itemJson" rows="14" style="margin-top:8px;font:12px/1.6 ui-monospace,Consolas,monospace">'+esc(JSON.stringify(it,null,2))+'</textarea>'
+      +'<button class="btn sm" data-act="itemApplyJson" style="margin-top:8px">应用 JSON</button>'
+      +'<button class="btn sm" data-act="itemDel" style="margin-top:8px;color:#a34a3f;float:right">删除这个物品</button></details>';
+  }
+  h+='</div></div>';
+  return h+'</div>';
+}
+function fld(label,inner){
+  return '<label class="f"><span>'+esc(label)+'</span>'+inner+'</label>';
+}
+function occupancyHTML(it){
+  const cells={};
+  (it.occupancy||[]).forEach(c=>{ cells[(c.x||0)+','+(c.y||0)]=1; });
+  let h='<div style="display:inline-grid;grid-template-columns:repeat(4,26px);gap:3px">';
+  for(let y=0;y<4;y++) for(let x=0;x<4;x++){
+    const on=cells[x+','+y];
+    h+='<button data-act="itemCell" data-x="'+x+'" data-y="'+y+'" class="btn sm" style="width:26px;height:26px;padding:0;'
+      +(on?'background:var(--accent);border-color:var(--accent);color:#fff8ef':'opacity:.45')+'">'+(on?'■':'·')+'</button>';
+  }
+  return h+'</div><div class="mini" style="margin-top:4px">点亮表示占用；左上角是原点。</div>';
+}
 
 /* ---------- 对话 ---------- */
 const QSTATUS={idea:'构思',open:'进行中',done:'已完成'};
@@ -2106,6 +2223,77 @@ const ACT={
   },
   charView(el){ DB.ui.charBoard=(el.dataset.v==='board'); DB.ui.linkMode=false; DB.ui.linkA=null; if(!DB.ui.charBoard) DB.ui.charId=null; render(); },
   libView(el){ DB.ui.libBoard=(el.dataset.v==='board'); DB.ui.linkMode=false; DB.ui.linkA=null; render(); },
+  async itemConnect(){
+    const s=$('#itemSrv');
+    if(s) DB.ui.itemSrv=(s.value||'').trim()||ITEM_SRV;
+    try{
+      const d=await itemFetch('/api/document');
+      ITEMDOC=d.document;
+      ITEMOPTS=await itemFetch('/api/options').catch(()=>null);
+      if(!curItem()) DB.ui.itemSel=(ITEMDOC.items&&ITEMDOC.items[0]&&ITEMDOC.items[0].id)||null;
+      ITEMDIRTY=false; touch(); render();
+      toast('已连接：'+(ITEMDOC.items||[]).length+' 个物品');
+    }catch(e){ warn(e.message); }
+  },
+  itemSel(el){ DB.ui.itemSel=+el.dataset.id; render(); },
+  itemCell(el){
+    const it=curItem(); if(!it) return;
+    const x=+el.dataset.x, y=+el.dataset.y;
+    it.occupancy=it.occupancy||[];
+    const i=it.occupancy.findIndex(c=>(c.x||0)===x&&(c.y||0)===y);
+    if(i>=0) it.occupancy.splice(i,1); else it.occupancy.push({x:x,y:y});
+    ITEMDIRTY=true; render();
+  },
+  itemAdd(){
+    if(!ITEMDOC) return;
+    const ids=(ITEMDOC.items||[]).map(x=>x.id||0);
+    const id=(ids.length?Math.max.apply(null,ids):1000)+1;
+    const it={
+      id:id, key:'NewItem'+id, nameKey:'ITEM_NEW_'+id, descriptionKey:'DESC_NEW_'+id,
+      localization:{chineseSimplified:{name:'新物品',description:''},english:{name:'New Item',description:''}},
+      iconKey:'inventory/new', slotType:(ITEMOPTS&&ITEMOPTS.slotTypes&&ITEMOPTS.slotTypes[0])||'Pocket',
+      rarity:'Common', maxStack:1, occupancy:[{x:0,y:0}], defaultDirection:'Down',
+      weight:1, price:0, damage:0, tooltip:{rows:[]}
+    };
+    ITEMDOC.items.push(it); DB.ui.itemSel=id; ITEMDIRTY=true; render();
+  },
+  itemDel(){
+    const it=curItem(); if(!it) return;
+    if(!confirm('从文档里删除「'+itemName(it)+'」？保存后才会写入文件。')) return;
+    ITEMDOC.items=ITEMDOC.items.filter(x=>x.id!==it.id);
+    DB.ui.itemSel=(ITEMDOC.items[0]||{}).id||null;
+    ITEMDIRTY=true; render();
+  },
+  itemApplyJson(){
+    const ta=$('#itemJson'); if(!ta) return;
+    const it=curItem(); if(!it) return;
+    let obj;
+    try{ obj=JSON.parse(ta.value); }catch(e){ return warn('JSON 解析失败：'+e.message); }
+    Object.keys(it).forEach(k=>{ delete it[k]; });
+    Object.assign(it,obj);
+    ITEMDIRTY=true; render(); toast('已应用，记得保存');
+  },
+  async itemValidate(){
+    if(!ITEMDOC) return;
+    try{
+      const v=await itemFetch('/api/validate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(ITEMDOC)});
+      if(v.valid) toast('校验通过');
+      else warn('校验没过：'+(v.errors||[]).slice(0,4).join('；'));
+    }catch(e){ warn(e.message); }
+  },
+  async itemSave(){
+    if(!ITEMDOC) return;
+    try{
+      const v=await itemFetch('/api/validate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(ITEMDOC)});
+      if(!v.valid){ return warn('校验没过，没有保存：'+(v.errors||[]).slice(0,4).join('；')); }
+      const r=await itemFetch('/api/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(ITEMDOC)});
+      ITEMDIRTY=false; toast((r&&r.message)||'已保存');
+      render();
+    }catch(e){
+      const errs=e.data&&e.data.errors;
+      warn(errs&&errs.length?('保存失败：'+errs.slice(0,4).join('；')):e.message);
+    }
+  },
   mapDelRegion(el){
     const id=el.dataset.id;
     DB.map.regions=(DB.map.regions||[]).filter(r=>r.id!==id);
@@ -2385,6 +2573,12 @@ document.addEventListener('click',e=>{
 document.addEventListener('input',e=>{
   const tg=e.target;
   if(tg.id==='pq'){ palIdx=0; renderPalette(tg.value); return; }
+  const f=tg.dataset&&tg.dataset.itemField;
+  if(f){
+    const it=curItem(); if(!it) return;
+    setDeep(it,f.split('.'),tg.type==='number'?(tg.value===''?0:Number(tg.value)):tg.value);
+    ITEMDIRTY=true; return;
+  }
   if(tg.dataset&&tg.dataset.cell){
     const p=tg.dataset.cell.split('|');
     const t=(DB.threads||[]).find(x=>x.id===p[0]); if(!t) return;
