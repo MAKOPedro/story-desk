@@ -1639,12 +1639,14 @@ function viewSetup(){
     +'<label class="f"><span>分支</span><input type="text" data-bind="sync.branch" value="'+esc(sy.branch||'')+'" placeholder="main"></label>'
     +'<label class="f"><span>目录</span><input type="text" data-bind="sync.path" value="'+esc(sy.path||'')+'" placeholder="backup/项目名/"></label>'
     +'</div>'
+    +'<label class="f"><span>登录中转地址（用「用 GitHub 登录」时必填）</span><input type="text" data-bind="sync.proxy" value="'+esc(sy.proxy||'')+'" placeholder="https://你的-worker.workers.dev"></label>'
     +'<label class="f"><span>Token（只存这台电脑，不会写进导出文件）</span><input id="ghToken" type="password" value="'+esc(getToken())+'" placeholder="github_pat_..." autocomplete="off"></label>'
     +'<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:-6px 0 10px">'
+    +'<button class="btn sm primary" data-act="ghLogin">用 GitHub 登录</button>'
     +'<button class="btn sm" data-act="pasteToken">从剪贴板读取</button>'
     +'<span class="mini">'+(function(){
         const tk=getToken();
-        return tk?('已保存 Token · '+tk.length+' 字符 · 末四位 '+tk.slice(-4)):'还没有保存 Token —— 粘贴后点一下别处，或点左边按钮';
+        return tk?('已保存 Token · '+tk.length+' 字符 · 末四位 '+tk.slice(-4)):'还没有保存 Token —— 登录一次，或粘贴后点一下别处';
       })()+'</span>'
     +'</div>'
     +'<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">'
@@ -2117,6 +2119,14 @@ const ACT={
   },
   openPalette(){ openPalette(); },
   closeModal(){ closeModal(); },
+  ghLogin(){
+    const proxy=String((DB.sync&&DB.sync.proxy)||'').trim().replace(/\/$/,'');
+    if(!proxy) return warn('先在上面填「登录中转地址」（Worker 的地址）');
+    const ret=location.origin;
+    const url=proxy+'/login?return='+encodeURIComponent(ret);
+    const w=window.open(url,'ghauth','width=520,height=720');
+    if(!w) warn('浏览器拦了弹窗：请允许本页弹出窗口后重试');
+  },
   pasteToken(){
     const done=(v)=>{
       const t=String(v||'').trim();
@@ -2449,6 +2459,20 @@ document.addEventListener('keydown',e=>{
     if(e.key.toLowerCase()==='j'){ const cs=chapters(); const i=cs.findIndex(c=>c.id===DB.ui.nodeId); if(cs[i-1]) openNodeById(cs[i-1].id); }
     if(e.key.toLowerCase()==='k'){ const cs=chapters(); const i=cs.findIndex(c=>c.id===DB.ui.nodeId); if(cs[i+1]) openNodeById(cs[i+1].id); }
   }
+});
+window.addEventListener('message',function(e){
+  if(!DB||!e.data||e.data.type!=='gh-token') return;
+  const proxy=String((DB.sync&&DB.sync.proxy)||'').trim().replace(/\/$/,'');
+  if(!proxy) return;
+  let ok=false;
+  try{ ok=(e.origin===new URL(proxy).origin); }catch(err){ ok=false; }
+  if(!ok) return;
+  const t=String(e.data.token||'');
+  if(!t) return;
+  setToken(t);
+  toast('已登录 GitHub · '+t.length+' 字符');
+  render();
+  setTimeout(function(){ try{ ghTest(); }catch(err){} },300);
 });
 window.addEventListener('error',ev=>warn('脚本错误：'+ev.message+'（'+ev.lineno+':'+ev.colno+'）'));
 window.addEventListener('beforeunload',()=>{ try{ if(DB) localStorage.setItem(KEY,JSON.stringify(DB)); }catch(e){} });
