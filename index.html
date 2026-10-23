@@ -1456,12 +1456,22 @@ function ghHeaders(){
   return {'Authorization':'Bearer '+t,'Accept':'application/vnd.github+json','Content-Type':'application/json'};
 }
 async function ghFetch(url,opt){
-  const res=await fetch(url,Object.assign({headers:ghHeaders()},opt||{}));
+  let res;
+  try{
+    res=await fetch(url,Object.assign({headers:ghHeaders()},opt||{}));
+  }catch(err){
+    throw new Error('连不上 api.github.com —— 检查网络/代理/浏览器扩展，或用 https 打开本页');
+  }
   const txt=await res.text();
   let data=null;
   try{ data=txt?JSON.parse(txt):null; }catch(e){ data=txt; }
   if(!res.ok){
-    const err=new Error((data&&data.message)||('HTTP '+res.status));
+    let msg=(data&&data.message)||('HTTP '+res.status);
+    if(res.status===401) msg='Token 无效或已过期（401）';
+    else if(res.status===403) msg='Token 权限不够（403）—— 需要 Contents: Read and write';
+    else if(res.status===404) msg='仓库不存在，或这个 Token 看不到它（404）';
+    else msg=msg+'（HTTP '+res.status+'）';
+    const err=new Error(msg);
     err.status=res.status;
     throw err;
   }
@@ -1630,6 +1640,10 @@ function viewSetup(){
     +'<label class="f"><span>目录</span><input type="text" data-bind="sync.path" value="'+esc(sy.path||'')+'" placeholder="backup/项目名/"></label>'
     +'</div>'
     +'<label class="f"><span>Token（只存这台电脑，不会写进导出文件）</span><input id="ghToken" type="password" value="'+esc(getToken())+'" placeholder="github_pat_..." autocomplete="off"></label>'
+    +'<div class="mini" style="margin:-6px 0 10px">'+(function(){
+        const tk=getToken();
+        return tk?('已保存 Token · '+tk.length+' 字符 · 末四位 '+tk.slice(-4)):'还没有保存 Token —— 粘贴后点一下别处';
+      })()+'</div>'
     +'<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">'
     +'<button class="btn" data-act="ghTest">测试连接</button>'
     +'<button class="btn primary" data-act="ghPush">上传备份</button>'
