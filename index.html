@@ -86,8 +86,10 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:14px 0}
 .trow .tt{font-size:9.5px;color:var(--dim2);border:1px solid var(--line);border-radius:3px;padding:0 3px;flex:none;font-family:var(--sans);letter-spacing:0;line-height:1.6}
 .trow.empty .tw{color:var(--dim2)}
 .trow .tw .mini{font-size:10px;opacity:.7}
-.trow .cv{width:13px;flex:none;text-align:center;font-size:9px;color:var(--dim2);cursor:pointer;user-select:none;line-height:1}
-.trow .cv:hover{color:var(--accent)}
+.trow .cv{width:21px;height:21px;flex:none;display:flex;align-items:center;justify-content:center;
+  font-size:13px;line-height:1;color:var(--dim);cursor:pointer;user-select:none;border-radius:4px}
+.trow .cv:hover{color:var(--accent);background:var(--hover)}
+.trow .cv.has{color:var(--accent);font-size:11px}
 .pimg{max-width:100%;border-radius:6px;margin:10px 0;display:block;border:1px solid var(--line);cursor:zoom-in}
 .imgbox{display:inline-flex;align-items:center;gap:8px;margin-top:8px}
 .imgbox img{height:40px;border-radius:4px;border:1px solid var(--line)}
@@ -724,7 +726,7 @@ function trow(n,depth){
   const isEmpty=!kids&&!wc;
   const col=kids&&(DB.ui.collapsed||[]).indexOf(n.id)>=0;
   return '<div class="trow'+(n.type==='part'?' part':'')+(DB.ui.nodeId===n.id?' on':'')+(isEmpty?' empty':'')+'" draggable="true" data-act="openNode" data-id="'+n.id+'" style="padding-left:'+(4+depth*13)+'px">'
-    +'<span class="cv" data-act="toggleCollapse" data-id="'+n.id+'">'+(kids?(col?'▸':'▾'):'')+'</span>'
+    +'<span class="cv'+(kids?' has':'')+'" data-act="toggleCollapse" data-id="'+n.id+'">'+(kids?(col?'▶':'▼'):'')+'</span>'
     +'<span class="dot"></span><span class="tw">'+esc(n.title||'（未命名）')+(isEmpty?' <span class="mini">空</span>':'')+'</span>'
     +'<span class="tt">'+esc(typeLabel(n))+'</span>'
     +(wc?'<span class="tc">'+wc+'</span>':'')+'</div>';
