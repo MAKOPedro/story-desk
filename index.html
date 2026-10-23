@@ -1640,10 +1640,13 @@ function viewSetup(){
     +'<label class="f"><span>目录</span><input type="text" data-bind="sync.path" value="'+esc(sy.path||'')+'" placeholder="backup/项目名/"></label>'
     +'</div>'
     +'<label class="f"><span>Token（只存这台电脑，不会写进导出文件）</span><input id="ghToken" type="password" value="'+esc(getToken())+'" placeholder="github_pat_..." autocomplete="off"></label>'
-    +'<div class="mini" style="margin:-6px 0 10px">'+(function(){
+    +'<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:-6px 0 10px">'
+    +'<button class="btn sm" data-act="pasteToken">从剪贴板读取</button>'
+    +'<span class="mini">'+(function(){
         const tk=getToken();
-        return tk?('已保存 Token · '+tk.length+' 字符 · 末四位 '+tk.slice(-4)):'还没有保存 Token —— 粘贴后点一下别处';
-      })()+'</div>'
+        return tk?('已保存 Token · '+tk.length+' 字符 · 末四位 '+tk.slice(-4)):'还没有保存 Token —— 粘贴后点一下别处，或点左边按钮';
+      })()+'</span>'
+    +'</div>'
     +'<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">'
     +'<button class="btn" data-act="ghTest">测试连接</button>'
     +'<button class="btn primary" data-act="ghPush">上传备份</button>'
@@ -2114,6 +2117,24 @@ const ACT={
   },
   openPalette(){ openPalette(); },
   closeModal(){ closeModal(); },
+  pasteToken(){
+    const done=(v)=>{
+      const t=String(v||'').trim();
+      if(!t) return toast('剪贴板是空的');
+      if(!/^(gh[pousr]_|github_pat_)/.test(t)) return warn('剪贴板里的内容不像 GitHub token');
+      setToken(t);
+      const el=$('#ghToken'); if(el) el.value=t;
+      render();
+      toast('已读取 Token：'+t.length+' 字符 · 末四位 '+t.slice(-4));
+    };
+    if(navigator.clipboard&&navigator.clipboard.readText){
+      navigator.clipboard.readText().then(done).catch(()=>{
+        warn('浏览器拒绝了读取剪贴板：请点一下 Token 输入框再按 Ctrl+V');
+      });
+    }else{
+      warn('这个浏览器不支持读剪贴板，请手动 Ctrl+V');
+    }
+  },
   ghTest(){ return ghTest(); },
   ghPush(){
     return ghPush(false).catch(e=>{
