@@ -1527,7 +1527,16 @@ function unionById(local,remote){
 async function ghTest(){
   const cfg=syncCfg();
   const me=await ghFetch('https://api.github.com/user');
-  const r=await ghFetch('https://api.github.com/repos/'+cfg.repo);
+  let r=null;
+  try{
+    r=await ghFetch('https://api.github.com/repos/'+cfg.repo);
+  }catch(e){
+    if(e.status===404&&me&&me.login){
+      e.message='仓库 '+cfg.repo+' 看不到（404）· 当前 token 属于 '+me.login;
+      e.status=404;
+    }
+    throw e;
+  }
   DB.sync.lastTest=now();
   toast('连接成功：'+(me&&me.login||'?')+' → '+r.full_name+(r.private?' · 私有仓库':' · 公开仓库'));
   persist(); render();
