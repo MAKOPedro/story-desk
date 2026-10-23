@@ -99,6 +99,11 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:14px 0}
 .ctxmenu .sep{height:1px;background:var(--line);margin:4px 3px}
 .ctxmenu .mini{padding:4px 9px 3px}
 .ctxmenu .ic{width:14px;text-align:center;color:var(--dim2);flex:none}
+.prose.edit{white-space:pre-wrap;word-break:break-word}
+.prose.edit:empty::before{content:attr(data-ph);color:var(--dim2)}
+.ce-ref{display:inline-block;padding:0 5px;margin:0 2px;border:1px solid var(--accent);border-radius:4px;background:var(--chip);
+  color:var(--accent);font-size:.92em;line-height:1.55;vertical-align:baseline;cursor:pointer;user-select:none}
+.ce-img{display:block;max-width:100%;border-radius:6px;margin:10px 0;border:1px solid var(--line);cursor:zoom-in}
 
 .main{overflow-y:auto;padding:30px 40px 80px;background:var(--paper)}
 .sheet{max-width:720px;margin:0 auto;background:var(--panel);border:1px solid var(--line);border-radius:10px;
@@ -745,6 +750,8 @@ function sheetHTML(n){
     +'</label>';
   if(DB.ui.preview){
     h+='<div class="preview" id="preview">'+richText(n.text)+'</div>';
+  }else if(richEditOn()){
+    h+='<div class="prose edit" id="eText" contenteditable="true" spellcheck="false" data-ph="从这里开始写…">'+textToCE(n.text)+'</div>';
   }else{
     h+='<textarea class="prose" id="eText" data-bind="node.text" placeholder="从这里开始写…">'+esc(n.text||'')+'</textarea>';
   }
@@ -786,6 +793,18 @@ function compressImage(file,cb){
 }
 function insertIntoText(tok){
   const n=curNode(); if(!n) return;
+  const el=ceEl();
+  if(el&&el.isContentEditable){
+    el.focus();
+    if(tok.indexOf('{{img:')===0){
+      const id=tok.slice(6,-2);
+      document.execCommand('insertHTML',false,ceImg(id));
+    }else{
+      document.execCommand('insertText',false,tok);
+    }
+    syncCE();
+    return;
+  }
   const ta=$('#eText');
   if(ta&&typeof ta.selectionStart==='number'){
     const s=ta.selectionStart, e=ta.selectionEnd;
@@ -1855,6 +1874,10 @@ function viewSetup(){
     +'<button class="btn sm '+(formMode()==='script'?'primary':'')+'" data-act="setForm" data-v="script">剧本 · 幕 › 场</button>'
     +'<button class="btn sm '+(formMode()==='mixed'?'primary':'')+'" data-act="setForm" data-v="mixed">混合（旧数据）</button>'
     +'</div></label>'
+    +'<label class="f"><span>正文编辑区</span><div style="display:flex;gap:8px;flex-wrap:wrap">'
+    +'<button class="btn sm '+(richEditOn()?'primary':'')+'" data-act="setRichEdit" data-v="1">带方框（推荐）</button>'
+    +'<button class="btn sm '+(richEditOn()?'':'primary')+'" data-act="setRichEdit" data-v="0">纯文本</button>'
+    +'</div><span class="mini">带方框时引用显示成框，图片直接显示；纯文本时看到 [[ ]] 原文。</span></label>'
     +'</div>';
   h+='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px">'
     +'<button class="btn primary" data-act="exportMd">导出 Markdown（全篇）</button>'
@@ -2093,6 +2116,11 @@ const ACT={
     touch(); render();
     toast(formMode()==='novel'?'已切到小说：章 → 节':(formMode()==='script'?'已切到剧本：幕 → 场':'混合模式：幕、章、场都可建'));
   },
+  setRichEdit(el){
+    DB.ui.richEdit=el.dataset.v==='1';
+    touch(); render();
+    toast(DB.ui.richEdit?'编辑区：引用显示成方框':'编辑区：纯文本');
+  },
   addScene(el){ addNodeSmart('scene'); },
   openNode(el){ openNodeById(el.dataset.id); },
   nodeMenu(){
@@ -2223,8 +2251,18 @@ const ACT={
     closeModal(); touch(); render(); toast('已删除图片');
   },
   ctxWrapRef(){
-    const ta=$('#eText'), n=curNode();
-    if(!ta||!n) return;
+    const n=curNode(); if(!n) return;
+    const el=ceEl();
+    if(el&&el.isContentEditable){
+      const sel=window.getSelection();
+      const t=sel?String(sel.toString()).trim():'';
+      if(!t) return toast('先选中一段文字');
+      document.execCommand('insertHTML',false,ceChip(t));
+      syncCE(); closeCtx(); toast('已变成引用');
+      return;
+    }
+    const ta=$('#eText');
+    if(!ta) return;
     const s=CTXSEL.s, e=CTXSEL.e;
     if(s===e) return toast('先选中一段文字');
     const t=ta.value.slice(s,e);
@@ -2236,9 +2274,19 @@ const ACT={
     toast('已变成引用，预览里会显示成方框');
   },
   ctxNewEntry(){
-    const ta=$('#eText');
-    const t=String(ta?ta.value.slice(CTXSEL.s,CTXSEL.e):'').trim();
+    const el=ceEl();
+    let t='';
+    if(el&&el.isContentEditable){
+      const sel=window.getSelection();
+      t=sel?String(sel.toString()).trim():'';
+      CTXRANGE=(sel&&sel.rangeCount)?sel.getRangeAt(0).cloneRange():null;
+    }else{
+      const ta=$('#eText');
+      t=String(ta?ta.value.slice(CTXSEL.s,CTXSEL.e):'').trim();
+      CTXRANGE=null;
+    }
     if(!t) return toast('先选中一段文字');
+    CTXTEXT=t;
     closeCtx();
     modal('新建词条 · '+esc(t),
       '<label class="f"><span>名称</span><input id="neTitle" type="text" value="'+esc(t)+'"></label>'
@@ -2247,43 +2295,64 @@ const ACT={
   },
   ctxNewEntryGo(){
     const ti=$('#neTitle'), ty=$('#neType');
-    const title=String((ti&&ti.value)||'').trim();
+    const title=String((ti&&ti.value)||CTXTEXT||'').trim();
     if(!title) return toast('名称不能空');
     const e=blankEntry((ty&&ty.value)||'term');
     e.title=title; DB.entries.push(e);
-    const ta=$('#eText'), n=curNode();
-    if(ta&&n){
-      const s=CTXSEL.s, en=CTXSEL.e;
-      ta.value=ta.value.slice(0,s)+'[['+title+']]'+ta.value.slice(en);
-      n.text=ta.value; n.updatedAt=now();
+    const el=ceEl(), n=curNode();
+    if(el&&el.isContentEditable&&n){
+      el.focus();
+      if(CTXRANGE){ const s=window.getSelection(); s.removeAllRanges(); s.addRange(CTXRANGE); }
+      document.execCommand('insertHTML',false,ceChip(title));
+      syncCE();
+    }else if(n){
+      const ta=$('#eText');
+      if(ta){
+        const s=CTXSEL.s, en=CTXSEL.e;
+        ta.value=ta.value.slice(0,s)+'[['+title+']]'+ta.value.slice(en);
+        n.text=ta.value; n.updatedAt=now();
+      }
     }
     closeModal(); touch(); render();
     toast('已建词条「'+title+'」并插入引用');
   },
   ctxCopy(){
-    const ta=$('#eText');
-    if(ta){ ta.focus(); try{ ta.setSelectionRange(CTXSEL.s,CTXSEL.e); }catch(x){} document.execCommand('copy'); }
+    const el=ceEl();
+    if(el&&el.isContentEditable){ el.focus(); document.execCommand('copy'); }
+    else{
+      const ta=$('#eText');
+      if(ta){ ta.focus(); try{ ta.setSelectionRange(CTXSEL.s,CTXSEL.e); }catch(x){} document.execCommand('copy'); }
+    }
     closeCtx();
   },
   ctxCut(){
-    const ta=$('#eText'), n=curNode();
-    if(ta&&n){
-      ta.focus(); try{ ta.setSelectionRange(CTXSEL.s,CTXSEL.e); }catch(x){}
-      document.execCommand('cut');
-      n.text=ta.value; n.updatedAt=now(); touch();
+    const el=ceEl();
+    if(el&&el.isContentEditable){ el.focus(); document.execCommand('cut'); syncCE(); }
+    else{
+      const ta=$('#eText'), n=curNode();
+      if(ta&&n){
+        ta.focus(); try{ ta.setSelectionRange(CTXSEL.s,CTXSEL.e); }catch(x){}
+        document.execCommand('cut');
+        n.text=ta.value; n.updatedAt=now(); touch();
+      }
     }
     closeCtx();
   },
   ctxPaste(){
+    const el=ceEl();
     closeCtx();
     if(navigator.clipboard&&navigator.clipboard.readText){
-      navigator.clipboard.readText().then(t=>{ if(t) insertIntoText(t); })
-        .catch(()=>toast('浏览器不让读剪贴板，直接按 Ctrl+V'));
+      navigator.clipboard.readText().then(t=>{
+        if(!t) return;
+        if(el&&el.isContentEditable){ el.focus(); document.execCommand('insertText',false,t); syncCE(); }
+        else insertIntoText(t);
+      }).catch(()=>toast('浏览器不让读剪贴板，直接按 Ctrl+V'));
     }else toast('这个浏览器不支持，直接按 Ctrl+V');
   },
   ctxAll(){
-    const ta=$('#eText');
-    if(ta){ ta.focus(); ta.select(); }
+    const el=ceEl();
+    if(el&&el.isContentEditable){ el.focus(); document.execCommand('selectAll'); }
+    else{ const ta=$('#eText'); if(ta){ ta.focus(); ta.select(); } }
     closeCtx();
   },
   ctxInsertRef(){ closeCtx(); ACT.insertRef(); },
@@ -2786,6 +2855,48 @@ function download(name,text,mime){
   document.body.appendChild(a); a.click();
   setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},1200);
 }
+/* ---------- 富文本正文 ---------- */
+let COMPOSING=false, CTXRANGE=null, CTXTEXT='';
+function richEditOn(){ return DB.ui.richEdit!==false; }
+function ceEl(){ return document.getElementById('eText'); }
+function ceChip(name){ return '<span class="ce-ref" contenteditable="false" data-ref="'+esc(name)+'">'+esc(name)+'</span>'; }
+function ceImg(id){
+  const a=assetById(id);
+  return a?'<img class="ce-img" contenteditable="false" data-img="'+id+'" src="'+a.dataUrl+'" alt="'+esc(a.name||'')+'">':'';
+}
+function textToCE(t){
+  let s=esc(t||'');
+  s=s.replace(/\{\{img:([A-Za-z0-9_-]+)\}\}/g,(m,id)=>ceImg(id));
+  s=s.replace(/\[\[([^\]]+)\]\](?!\])/g,(m,x)=>ceChip(x));
+  return s.replace(/\n/g,'<br>');
+}
+function ceToText(root){
+  let out='';
+  const walk=(node)=>{
+    for(let i=0;i<node.childNodes.length;i++){
+      const n=node.childNodes[i];
+      if(n.nodeType===3){ out+=String(n.nodeValue||'').replace(/\u200b/g,''); continue; }
+      if(n.nodeType!==1) continue;
+      const ds=n.dataset||{};
+      if(ds.ref!=null){ out+='[['+ds.ref+']]'; continue; }
+      if(ds.img){ out+='{{img:'+ds.img+'}}'; continue; }
+      const tag=n.tagName;
+      if(tag==='BR'){ out+='\n'; continue; }
+      if(tag==='DIV'||tag==='P'){ if(out&&out.slice(-1)!=='\n') out+='\n'; walk(n); continue; }
+      walk(n);
+    }
+  };
+  walk(root);
+  return out.replace(/\u00a0/g,' ').replace(/\n{3,}/g,'\n\n').replace(/[ \t]+$/gm,'');
+}
+function syncCE(){
+  const el=ceEl(); if(!el) return;
+  const n=curNode(); if(!n) return;
+  const t=ceToText(el);
+  if(t===n.text) return;
+  n.text=t; n.updatedAt=now(); touch();
+  const wc=document.getElementById('wc'); if(wc) wc.textContent=chars(t)+' 字';
+}
 function mdText(t){
   return String(t||'')
     .replace(/\[\[|\]\]/g,'')
@@ -2998,6 +3109,23 @@ document.addEventListener('paste',e=>{
       return;
     }
   }
+  if(ta.isContentEditable){
+    const txt=(e.clipboardData&&e.clipboardData.getData('text/plain'))||'';
+    e.preventDefault();
+    if(txt) document.execCommand('insertText',false,txt);
+    syncCE();
+  }
+});
+document.addEventListener('compositionstart',e=>{ if(e.target&&e.target.id==='eText') COMPOSING=true; });
+document.addEventListener('compositionend',e=>{ if(e.target&&e.target.id==='eText'){ COMPOSING=false; syncCE(); } });
+document.addEventListener('keydown',e=>{
+  const t=e.target;
+  if(!t||t.id!=='eText'||!t.isContentEditable) return;
+  if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing&&!COMPOSING){
+    e.preventDefault();
+    document.execCommand('insertHTML',false,'<br>');
+    syncCE();
+  }
 });
 document.addEventListener('dragover',e=>{
   if(e.target&&e.target.id==='eText') e.preventDefault();
@@ -3012,6 +3140,7 @@ document.addEventListener('drop',e=>{
 
 document.addEventListener('input',e=>{
   const tg=e.target;
+  if(tg.id==='eText'&&tg.isContentEditable){ if(!COMPOSING) syncCE(); return; }
   if(tg.id==='pq'){ palIdx=0; renderPalette(tg.value); return; }
   const f=tg.dataset&&tg.dataset.itemField;
   if(f){
@@ -3171,7 +3300,7 @@ function fixNode(n){
 }
 function init(){
   DB=load();
-  DB.ui=Object.assign({tab:'write',nodeId:null,entryId:null,charId:null,theme:'paper',filter:'',q:'',preview:false,zen:false,sub:'outline',collapsed:[],itemSrv:''},DB.ui||{});
+  DB.ui=Object.assign({tab:'write',nodeId:null,entryId:null,charId:null,theme:'paper',filter:'',q:'',preview:false,zen:false,sub:'outline',collapsed:[],itemSrv:'',richEdit:true},DB.ui||{});
   if(!Array.isArray(DB.ui.collapsed)) DB.ui.collapsed=[];
   if(!Array.isArray(DB.assets)) DB.assets=[];
   if(!DB.meta) DB.meta={title:'未命名',logline:'',genre:'',form:'novel',targetWords:60000};
