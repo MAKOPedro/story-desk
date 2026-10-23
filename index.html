@@ -2359,18 +2359,30 @@ const ACT={
   ctxPickImg(){ closeCtx(); ACT.pickImg(); },
   insertRef(){
     closeCtx();
-    const list=DB.entries.slice().sort((a,b)=>String(a.title||'').localeCompare(String(b.title||''),'zh'));
+    const list=DB.entries.filter(e=>e.title&&e.title.trim()).sort((a,b)=>String(a.title).localeCompare(String(b.title),'zh'));
     if(!list.length) return toast('还没有词条，先去「设定」建一个');
+    REFLIST=list; REFTYPE=''; REFQ='';
+    const tabs=EK.filter(k=>list.some(e=>e.type===k));
     modal('插入引用',
-      '<div style="display:flex;flex-direction:column;gap:4px;max-height:52vh;overflow:auto">'
-      +list.map(e=>'<button class="btn" style="text-align:left" data-act="pickRef" data-v="'+esc(e.title)+'">'
-        +ET[e.type].icon+' '+esc(e.title)+'</button>').join('')+'</div>',
-      '<button class="btn" data-act="closeModal">取消</button>');
+      '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px" id="refTabs">'
+        +'<button class="btn sm primary" data-act="refTab" data-v="">全部 '+list.length+'</button>'
+        +tabs.map(k=>'<button class="btn sm" data-act="refTab" data-v="'+k+'">'+ET[k].icon+' '+esc(ET[k].label)+' '+list.filter(e=>e.type===k).length+'</button>').join('')
+      +'</div>'
+      +'<input id="refQ" type="search" placeholder="搜索名称或别名…" style="margin-bottom:12px">'
+      +'<div id="refList" style="max-height:54vh;overflow:auto;padding-right:2px">'+refListHTML(list,'','')+'</div>',
+      '<button class="btn" data-act="closeModal">取消</button>', true);
   },
   pickRef(el){
     const t=el.dataset.v||'';
+    if(!t) return;
+    const ce=ceEl();
+    if(ce&&ce.isContentEditable){
+      ce.focus();
+      document.execCommand('insertHTML',false,ceChip(t));
+      syncCE(); closeModal(); return;
+    }
     const ta=$('#eText'), n=curNode();
-    if(ta&&n&&t){
+    if(ta&&n){
       const s=Number.isFinite(ta.selectionStart)?ta.selectionStart:ta.value.length;
       const en=Number.isFinite(ta.selectionEnd)?ta.selectionEnd:s;
       const ins='[['+t+']]';
@@ -2380,6 +2392,7 @@ const ACT={
     }
     closeModal();
   },
+  refTab(el){ REFTYPE=el.dataset.v||''; paintRef(); },
   sub(el){ DB.ui.sub=el.dataset.v; render(); },
   addChar(){
     const e=blankEntry('char'); e.title='新角色';
@@ -2897,6 +2910,46 @@ function syncCE(){
   n.text=t; n.updatedAt=now(); touch();
   const wc=document.getElementById('wc'); if(wc) wc.textContent=chars(t)+' 字';
 }
+/* ---------- 引用选择器 ---------- */
+let REFLIST=null, REFTYPE='', REFQ='';
+function refListHTML(list,type,q){
+  const qq=String(q||'').trim().toLowerCase();
+  const f=(list||[]).filter(e=>{
+    if(type&&e.type!==type) return false;
+    if(!qq) return true;
+    const hay=(e.title+' '+(e.alias||[]).join(' ')).toLowerCase();
+    return hay.indexOf(qq)>=0;
+  });
+  if(!f.length) return '<div class="mini" style="padding:18px;text-align:center">没有匹配的词条</div>';
+  let h='';
+  EK.forEach(k=>{
+    const arr=f.filter(e=>e.type===k);
+    if(!arr.length) return;
+    h+='<div style="margin-bottom:12px">'
+      +'<div class="mini" style="margin:2px 2px 7px">'+ET[k].icon+' '+esc(ET[k].label)+' · '+arr.length+'</div>'
+      +'<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:6px">'
+      +arr.map(e=>'<button class="btn" style="justify-content:flex-start;text-align:left;padding:9px 10px;min-width:0" data-act="pickRef" data-v="'+esc(e.title)+'">'
+        +'<span style="flex:none;margin-right:6px">'+ET[k].icon+'</span>'
+        +'<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(e.title)+'</span>'
+        +((e.alias&&e.alias.length)?'<span class="mini" style="margin-left:6px;flex:none">又名 '+esc(e.alias[0])+'</span>':'')
+        +'</button>').join('')
+      +'</div></div>';
+  });
+  return h;
+}
+function paintRef(){
+  const el=document.getElementById('refList');
+  if(el) el.innerHTML=refListHTML(REFLIST||[],REFTYPE,REFQ);
+  const tabs=document.getElementById('refTabs');
+  if(tabs){
+    const bs=tabs.getElementsByTagName('button');
+    for(let i=0;i<bs.length;i++){
+      const on=(bs[i].dataset.v||'')===REFTYPE;
+      bs[i].className='btn sm'+(on?' primary':'');
+    }
+  }
+}
+
 function mdText(t){
   return String(t||'')
     .replace(/\[\[|\]\]/g,'')
@@ -3141,6 +3194,7 @@ document.addEventListener('drop',e=>{
 document.addEventListener('input',e=>{
   const tg=e.target;
   if(tg.id==='eText'&&tg.isContentEditable){ if(!COMPOSING) syncCE(); return; }
+  if(tg.id==='refQ'){ REFQ=tg.value; paintRef(); return; }
   if(tg.id==='pq'){ palIdx=0; renderPalette(tg.value); return; }
   const f=tg.dataset&&tg.dataset.itemField;
   if(f){
