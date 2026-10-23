@@ -1451,15 +1451,23 @@ function syncCfg(){
   if(!/\/$/.test(dir)) dir+='/';
   return {repo:repo,branch:branch,dir:dir};
 }
-function ghHeaders(){
+function ghHeaders(scheme){
   const t=getToken();
   if(!t) throw new Error('还没有填 Token');
-  return {'Authorization':'Bearer '+t,'Accept':'application/vnd.github+json','Content-Type':'application/json'};
+  return {'Authorization':(scheme||AUTH_SCHEME)+' '+t,'Accept':'application/vnd.github+json','Content-Type':'application/json'};
 }
+let AUTH_SCHEME='Bearer';
 async function ghFetch(url,opt){
+  const call=(scheme)=>fetch(url,Object.assign({headers:ghHeaders(scheme)},opt||{}));
   let res;
   try{
-    res=await fetch(url,Object.assign({headers:ghHeaders()},opt||{}));
+    res=await call(AUTH_SCHEME);
+    if(res.status===401){
+      const alt=(AUTH_SCHEME==='Bearer')?'token':'Bearer';
+      const res2=await call(alt);
+      if(res2.ok){ AUTH_SCHEME=alt; res=res2; }
+      else if(res2.status!==401){ res=res2; }
+    }
   }catch(err){
     throw new Error('连不上 api.github.com —— 检查网络/代理/浏览器扩展，或用 https 打开本页');
   }
@@ -1468,7 +1476,8 @@ async function ghFetch(url,opt){
   try{ data=txt?JSON.parse(txt):null; }catch(e){ data=txt; }
   if(!res.ok){
     let msg=(data&&data.message)||('HTTP '+res.status);
-    if(res.status===401) msg='Token 无效或已过期（401）';
+    const tk=getToken();
+    if(res.status===401) msg='Token 无效（401）· 已存 '+(tk?tk.length:0)+' 字符 · 末四位 '+(tk?tk.slice(-4):'（空）');
     else if(res.status===403) msg='Token 权限不够（403）—— 需要 Contents: Read and write';
     else if(res.status===404) msg='仓库不存在，或这个 Token 看不到它（404）';
     else msg=msg+'（HTTP '+res.status+'）';
@@ -1517,9 +1526,10 @@ function unionById(local,remote){
 }
 async function ghTest(){
   const cfg=syncCfg();
+  const me=await ghFetch('https://api.github.com/user');
   const r=await ghFetch('https://api.github.com/repos/'+cfg.repo);
   DB.sync.lastTest=now();
-  toast('连接成功：'+r.full_name+(r.private?' · 私有仓库':' · 公开仓库'));
+  toast('连接成功：'+(me&&me.login||'?')+' → '+r.full_name+(r.private?' · 私有仓库':' · 公开仓库'));
   persist(); render();
 }
 async function ghPush(force){
@@ -2476,6 +2486,10 @@ window.addEventListener('message',function(e){
   setTimeout(function(){ try{ ghTest(); }catch(err){} },300);
 });
 window.addEventListener('error',ev=>warn('脚本错误：'+ev.message+'（'+ev.lineno+':'+ev.colno+'）'));
+window.addEventListener('unhandledrejection',ev=>{
+  const r=ev.reason;
+  warn('后台请求失败：'+((r&&r.message)||r||'未知')+(r&&r.status?(' ['+r.status+']'):''));
+});
 window.addEventListener('beforeunload',()=>{ try{ if(DB) localStorage.setItem(KEY,JSON.stringify(DB)); }catch(e){} });
 document.addEventListener('visibilitychange',()=>{
   if(document.visibilityState==='hidden'){ try{ if(DB) persist(); }catch(e){} }
