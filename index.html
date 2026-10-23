@@ -320,6 +320,14 @@ const EK=Object.keys(ET);
 const ES={draft:{label:'草稿'},canon:{label:'正典'},cut:{label:'废弃'}};
 const FUNCS=['建立','推进','转折','揭示','喘息','收束'];
 const NT={part:{label:'幕'},chapter:{label:'章'},scene:{label:'场景'}};
+function formMode(){ return (DB.meta&&DB.meta.form)||'novel'; }
+function typeLabel(n){
+  if(!n) return '';
+  if(n.type==='part') return '幕';
+  if(n.type==='chapter') return '章';
+  const m=formMode();
+  return m==='novel'?'节':(m==='script'?'场':'场景');
+}
 
 /* ---------- 工具 ---------- */
 const $=(s,r=document)=>r.querySelector(s);
@@ -659,8 +667,12 @@ function viewWrite(){
   const n=curNode();
   return '<div class="write'+(DB.ui.zen?' zen':'')+'">'
     +'<aside class="side"><div class="hd"><b>结构</b>'
-    +'<button class="btn sm ghost" data-act="addPart" title="新建幕">＋幕</button>'
-    +'<button class="btn sm ghost" data-act="addChapter" title="新建章">＋章</button></div>'
+    +(formMode()==='novel'
+      ?'<button class="btn sm ghost" data-act="addChapter" title="新建章（顶层）">＋章</button>'
+       +'<button class="btn sm ghost" data-act="addScene" title="在选中的章下面新建节">＋节</button>'
+      :'<button class="btn sm ghost" data-act="addPart" title="新建幕（顶层）">＋幕</button>'
+       +'<button class="btn sm ghost" data-act="addScene" title="在选中的幕下面新建场">＋场</button>')
+    +'</div>'
     +'<div class="tree">'+treeHTML()+'</div></aside>'
     +'<section class="main">'+sheetHTML(n)+'</section>'
     +'<aside class="ctx">'+(n?ctxHTML(n):ctxEmpty())+'</aside>'
@@ -695,28 +707,23 @@ function sheetHTML(n){
   const isPart=n.type==='part';
   const trail=treePath(n).slice(0,-1).map(x=>x.title).join(' / ');
   let h='<div class="sheet">';
-  h+='<div class="nodebar"><span class="chip">'+NT[n.type].label+'</span>'
+  h+='<div class="nodebar"><span class="chip">'+typeLabel(n)+'</span>'
     +(trail?'<span class="chip">'+esc(trail)+'</span>':'')
     +'<div style="flex:1"></div>'
-    +(isPart?'':'<button class="btn sm ghost" data-act="preview">'+(DB.ui.preview?'编辑':'预览')+'</button>')
-    +(isPart?'':'<button class="btn sm ghost" data-act="insertRef" title="插入 [[词条]] 引用">[[ ]]</button>')
+    +'<button class="btn sm ghost" data-act="preview">'+(DB.ui.preview?'编辑':'预览')+'</button>'
+    +'<button class="btn sm ghost" data-act="insertRef" title="插入 [[词条]] 引用">[[ ]]</button>'
     +'<button class="btn sm ghost" data-act="zen" title="专注模式">'+(DB.ui.zen?'⤡':'⤢')+'</button>'
     +'<button class="btn sm ghost" data-act="nodeMenu">⋯</button></div>';
   h+='<input class="title" data-bind="node.title" value="'+esc(n.title)+'" placeholder="章回标题">';
-  if(!isPart){
-    h+='<div style="display:flex;gap:5px;align-items:center;margin:8px 0 0">'
-      +FUNCS.map(f=>'<button class="btn sm '+(n.func===f?'primary':'ghost')+'" data-act="setFunc" data-v="'+f+'">'+f+'</button>').join('')
-      +'<div style="flex:1"></div><span class="mini" style="margin-right:4px">张力</span>'
-      +'<span class="func">'+[1,2,3,4,5].map(i=>'<button data-act="setInt" data-v="'+i+'" class="'+(n.intensity>=i?'on':'')+'">'+i+'</button>').join('')+'</span>'
-      +'</div>';
-  }
-  h+='<label class="f" style="margin-top:16px"><span>'+(isPart?'本幕概要':'一句话概要')+'</span>'
-    +(isPart?'<textarea data-bind="node.summary" rows="4">'+esc(n.summary||'')+'</textarea>'
-            :'<input type="text" data-bind="node.summary" value="'+esc(n.summary||'')+'" placeholder="这章发生了什么，一句话">')
+  h+='<div style="display:flex;gap:5px;align-items:center;margin:8px 0 0">'
+    +FUNCS.map(f=>'<button class="btn sm '+(n.func===f?'primary':'ghost')+'" data-act="setFunc" data-v="'+f+'">'+f+'</button>').join('')
+    +'<div style="flex:1"></div><span class="mini" style="margin-right:4px">张力</span>'
+    +'<span class="func">'+[1,2,3,4,5].map(i=>'<button data-act="setInt" data-v="'+i+'" class="'+(n.intensity>=i?'on':'')+'">'+i+'</button>').join('')+'</span>'
+    +'</div>';
+  h+='<label class="f" style="margin-top:16px"><span>'+(isPart?'本幕简介（会显示在幕下，不占正文字数）':'一句话概要')+'</span>'
+    +'<textarea data-bind="node.summary" rows="'+(isPart?6:2)+'">'+esc(n.summary||'')+'</textarea>'
     +'</label>';
-  if(isPart){
-    h+='<div class="mini" style="margin-top:10px">幕下面是章；在左边选中某一章开始写正文。</div>';
-  }else if(DB.ui.preview){
+  if(DB.ui.preview){
     h+='<div class="preview" id="preview">'+richText(n.text)+'</div>';
   }else{
     h+='<textarea class="prose" id="eText" data-bind="node.text" placeholder="从这里开始写…">'+esc(n.text||'')+'</textarea>';
@@ -1761,7 +1768,13 @@ function viewSetup(){
     +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">'
     +'<label class="f"><span>类型</span><input type="text" data-bind="meta.genre" value="'+esc(DB.meta.genre||'')+'"></label>'
     +'<label class="f"><span>目标字数</span><input type="number" data-bind="meta.targetWords" value="'+esc(DB.meta.targetWords||60000)+'"></label>'
-    +'</div></div>';
+    +'</div>'
+    +'<label class="f"><span>文体（决定层级：小说 章›节，剧本 幕›场）</span><div style="display:flex;gap:8px;flex-wrap:wrap">'
+    +'<button class="btn sm '+(formMode()==='novel'?'primary':'')+'" data-act="setForm" data-v="novel">小说 · 章 › 节</button>'
+    +'<button class="btn sm '+(formMode()==='script'?'primary':'')+'" data-act="setForm" data-v="script">剧本 · 幕 › 场</button>'
+    +'<button class="btn sm '+(formMode()==='mixed'?'primary':'')+'" data-act="setForm" data-v="mixed">混合（旧数据）</button>'
+    +'</div></label>'
+    +'</div>';
   h+='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px">'
     +'<button class="btn primary" data-act="exportMd">导出 Markdown（全篇）</button>'
     +'<button class="btn" data-act="exportTxt">导出正文纯文本</button>'
@@ -1930,10 +1943,15 @@ const ACT={
   },
   addChapter(){
     const parts=roots().filter(r=>r.type==='part');
-    const parent=parts.length?parts[parts.length-1].id:null;
+    const parent=(formMode()==='novel')?null:(parts.length?parts[parts.length-1].id:null);
     const n=newNode('chapter',parent,'第'+(chapters().length+1)+'章');
     DB.ui.nodeId=n.id; DB.ui.tab='write'; touch(); render();
     setTimeout(()=>{ const t=$('.sheet input.title'); if(t){ t.focus(); t.select(); } },50);
+  },
+  setForm(el){
+    DB.meta.form=el.dataset.v||'novel';
+    touch(); render();
+    toast(formMode()==='novel'?'已切到小说：章 → 节':(formMode()==='script'?'已切到剧本：幕 → 场':'混合模式：幕、章、场都可建'));
   },
   addScene(el){
     const parent=el.dataset.id||DB.ui.nodeId;
@@ -2449,7 +2467,7 @@ function handleAct(el){
 let palIdx=0, palItems=[];
 function paletteData(){
   const items=[];
-  DB.nodes.forEach(n=>items.push({kind:'node',id:n.id,label:n.title||'（未命名）',meta:NT[n.type].label}));
+  DB.nodes.forEach(n=>items.push({kind:'node',id:n.id,label:n.title||'（未命名）',meta:typeLabel(n)}));
   DB.entries.forEach(e=>items.push({kind:'entry',id:e.id,label:e.title||'（未命名）',meta:ET[e.type].label}));
   return items;
 }
