@@ -528,6 +528,7 @@ function load(){
 function persist(){
   try{ localStorage.setItem(KEY,JSON.stringify(DB)); lastSave=now(); paintSaved(); }
   catch(e){ storageOK=false; warn('保存失败：'+e.message+'（请导出备份）'); }
+  try{ bkMaybe(); }catch(e){}
 }
 function touch(){ if(saveTimer) clearTimeout(saveTimer); saveTimer=setTimeout(persist,600); const el=$('#saved'); if(el&&storageOK) el.textContent='…'; }
 function paintSaved(){
@@ -1860,6 +1861,263 @@ async function ghPull(){
   toast('拉取完成：更新 '+upd+' 章 · 新增 '+add+' 章 · 本地更新保留 '+kept+' 章');
 }
 
+/* ---------- 本地文件夹自动备份 ---------- */
+let BK={handle:null,name:'',busy:false,last:0};
+function bkSupported(){ return typeof window!=='undefined'&&!!window.showDirectoryPicker; }
+function idbOpen(){
+  return new Promise((res,rej)=>{
+    const r=indexedDB.open('storydesk',1);
+    r.onupgradeneeded=()=>{ try{ r.result.createObjectStore('kv'); }catch(e){} };
+    r.onsuccess=()=>res(r.result);
+    r.onerror=()=>rej(r.error);
+  });
+}
+function idbSet(k,v){
+  return idbOpen().then(db=>new Promise((res,rej)=>{
+    const t=db.transaction('kv','readwrite');
+    t.objectStore('kv').put(v,k);
+    t.oncomplete=()=>res(true); t.onerror=()=>rej(t.error);
+  }));
+}
+function idbGet(k){
+  return idbOpen().then(db=>new Promise((res,rej)=>{
+    const t=db.transaction('kv','readonly');
+    const q=t.objectStore('kv').get(k);
+    q.onsuccess=()=>res(q.result); q.onerror=()=>rej(q.error);
+  }));
+}
+function bkStamp(){
+  const d=new Date(), p=n=>String(n).padStart(2,'0');
+  return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+'-'+p(d.getHours())+p(d.getMinutes())+p(d.getSeconds());
+}
+async function bkLoad(){
+  if(!bkSupported()) return;
+  if(typeof indexedDB==='undefined') return;
+  try{
+    const h=await idbGet('backupDir');
+    if(h){ BK.handle=h; BK.name=h.name; try{ const q=await h.queryPermission({mode:'readwrite'}); BK.granted=(q==='granted'); }catch(e){} }
+  }catch(e){}
+}
+async function bkPickDir(){
+  if(!bkSupported()) return warn('这个浏览器不支持文件夹备份，请用 Chrome / Edge 打开');
+  try{
+    const h=await window.showDirectoryPicker({mode:'readwrite'});
+    BK.handle=h; BK.name=h.name; BK.granted=true;
+    try{ idbSet('backupDir',h).catch(()=>{}); }catch(e){}
+    await bkWrite(true);
+    toast('已连接备份文件夹「'+h.name+'」');
+  }catch(e){
+    if(e&&e.name!=='AbortError') warn('选文件夹失败：'+(e.message||e));
+  }
+  paintBk();
+}
+async function bkRequestPerm(){
+  if(!BK.handle) return bkPickDir();
+  try{
+    const p=await BK.handle.requestPermission({mode:'readwrite'});
+    BK.granted=(p==='granted');
+    if(BK.granted){ await bkWrite(true); }
+    else warn('没有拿到写入权限');
+  }catch(e){ warn('授权失败：'+(e.message||e)); }
+  paintBk();
+}
+async function bkWrite(force){
+  if(!BK.handle||BK.busy) return false;
+  BK.busy=true;
+  try{
+    if(!BK.granted){
+      try{ BK.granted=(await BK.handle.queryPermission({mode:'readwrite'}))==='granted'; }catch(e){ BK.granted=false; }
+      if(!BK.granted){ if(force) warn('备份文件夹需要重新授权'); return false; }
+    }
+    const data=JSON.stringify(DB);
+    const name='创作台-'+bkStamp()+'.json';
+    const fh=await BK.handle.getFileHandle(name,{create:true});
+    const w=await fh.createWritable();
+    await w.write(data); await w.close();
+    try{
+      const lh=await BK.handle.getFileHandle('最新.json',{create:true});
+      const lw=await lh.createWritable();
+      await lw.write(data); await lw.close();
+    }catch(e){}
+    await bkPrune();
+    DB.sync=DB.sync||{}; DB.sync.lastBackup=now();
+    BK.last=Date.now();
+    touch();
+    if(force) toast('已备份到「'+BK.name+'」');
+    return true;
+  }catch(e){
+    warn('备份失败：'+(e.message||e));
+    return false;
+  }finally{
+    BK.busy=false;
+    paintBk();
+  }
+}
+async function bkPrune(keep){
+  if(!BK.handle||!BK.handle.entries) return;
+  const list=[];
+  try{
+    for await (const pair of BK.handle.entries()){
+      const n=pair[0]||'';
+      if(n.indexOf('创作台-')===0&&n.slice(-5)==='.json') list.push(n);
+    }
+  }catch(e){ return; }
+  list.sort();
+  const max=keep||30;
+  while(list.length>max){
+    const old=list.shift();
+    try{ await BK.handle.removeEntry(old); }catch(e){}
+  }
+}
+function bkMaybe(){
+  if(!BK.handle||!BK.granted) return;
+  if(Date.now()-BK.last<10*60*1000) return;
+  bkWrite(false);
+}
+function paintBk(){
+  const el=document.getElementById('bkStatus');
+  if(!el) return;
+  if(!bkSupported()){ el.textContent='这个浏览器不支持文件夹备份（用 Chrome / Edge）'; return; }
+  if(!BK.handle){ el.textContent='还没选备份文件夹'; return; }
+  const t=DB.sync&&DB.sync.lastBackup?dt(DB.sync.lastBackup):'—';
+  el.textContent=BK.granted?('备份到「'+BK.name+'」· 上次 '+t):('「'+BK.name+'」需要重新授权');
+}
+
+function bkStatusText(){
+  if(!bkSupported()) return '这个浏览器不支持文件夹备份（请用 Chrome / Edge）';
+  if(!BK.handle) return '还没选备份文件夹';
+  const t=DB.sync&&DB.sync.lastBackup?dt(DB.sync.lastBackup):'—';
+  return BK.granted?('「'+BK.name+'」· 上次 '+t):('「'+BK.name+'」需要重新授权');
+}
+function paintBk(){
+  const el=document.getElementById('bkStatus');
+  if(el) el.textContent=bkStatusText();
+}
+
+/* ---------- 全局查找替换 ---------- */
+function frTargets(){
+  const out=[];
+  const push=(label,getter,setter)=>out.push({label:label,get:getter,set:setter});
+  const M=DB.meta||{};
+  push('项目 · 标题',()=>M.title||'',v=>{M.title=v;});
+  push('项目 · 一句话故事',()=>M.logline||'',v=>{M.logline=v;});
+  (DB.nodes||[]).forEach(n=>{
+    const tag=(n.title||'未命名');
+    push('章节 · '+tag+' · 标题',()=>n.title||'',v=>{n.title=v;});
+    push('章节 · '+tag+' · 概要',()=>n.summary||'',v=>{n.summary=v;});
+    push('章节 · '+tag+' · 正文',()=>n.text||'',v=>{n.text=v;});
+  });
+  (DB.entries||[]).forEach(e=>{
+    const tag=(e.title||'未命名');
+    push('词条 · '+tag+' · 名称',()=>e.title||'',v=>{e.title=v;});
+    push('词条 · '+tag+' · 内容',()=>e.body||'',v=>{e.body=v;});
+    (e.alias||[]).forEach((a,i)=>push('词条 · '+tag+' · 别名',()=>e.alias[i]||'',v=>{e.alias[i]=v;}));
+    Object.keys(e.fields||{}).forEach(f=>push('词条 · '+tag+' · '+f,()=>e.fields[f]||'',v=>{e.fields[f]=v;}));
+  });
+  (DB.dialogues||[]).forEach(d=>{
+    const tag=(d.title||'未命名');
+    push('对话 · '+tag+' · 标题',()=>d.title||'',v=>{d.title=v;});
+    push('对话 · '+tag+' · 场景',()=>d.scene||'',v=>{d.scene=v;});
+    push('对话 · '+tag+' · 触发',()=>d.trigger||'',v=>{d.trigger=v;});
+    (d.lines||[]).forEach((l,i)=>{
+      push('对话 · '+tag+' · 台词'+(i+1),()=>l.tx||'',v=>{l.tx=v;});
+      push('对话 · '+tag+' · 说话人'+(i+1),()=>l.sp||'',v=>{l.sp=v;});
+    });
+  });
+  (DB.quests||[]).forEach(q=>{
+    const tag=(q.title||'未命名');
+    push('任务 · '+tag+' · 标题',()=>q.title||'',v=>{q.title=v;});
+    push('任务 · '+tag+' · 目标',()=>q.goal||'',v=>{q.goal=v;});
+    push('任务 · '+tag+' · 奖励',()=>q.reward||'',v=>{q.reward=v;});
+    (q.steps||[]).forEach((s,i)=>push('任务 · '+tag+' · 步骤'+(i+1),()=>s.text||'',v=>{s.text=v;}));
+  });
+  return out;
+}
+function frCount(v,q,cs){
+  if(!q) return 0;
+  const hay=cs?v:String(v).toLowerCase(), needle=cs?q:q.toLowerCase();
+  let i=hay.indexOf(needle), n=0;
+  while(i>=0){ n++; i=hay.indexOf(needle,i+needle.length); }
+  return n;
+}
+function frSnip(v,q,cs){
+  if(!q) return '';
+  const hay=cs?v:String(v).toLowerCase(), needle=cs?q:q.toLowerCase();
+  let i=hay.indexOf(needle);
+  if(i<0) return '';
+  const a=Math.max(0,i-24), b=Math.min(v.length,i+q.length+34);
+  return (a>0?'…':'')+v.slice(a,b)+(b<v.length?'…':'');
+}
+function frScan(q,cs){
+  if(!q) return [];
+  return frTargets().map(t=>{
+    const v=String(t.get()||'');
+    const c=frCount(v,q,cs);
+    return c?{label:t.label,count:c,snippet:frSnip(v,q,cs)}:null;
+  }).filter(Boolean);
+}
+function frRun(q,to,cs){
+  if(!q) return 0;
+  let total=0;
+  frTargets().forEach(t=>{
+    const v=String(t.get()||'');
+    const c=frCount(v,q,cs);
+    if(!c) return;
+    let nv;
+    if(cs) nv=v.split(q).join(to);
+    else nv=v.replace(new RegExp(escRe(q),'gi'),to);
+    t.set(nv); total+=c;
+  });
+  return total;
+}
+function escRe(s){ return String(s).replace(/[.*+?^${}()|[\]\\]/g,'\\$&'); }
+
+function openFrModal(){
+  modal('查找替换',
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">'
+      +'<label class="f"><span>查找</span><input id="frQ" type="text" placeholder="要被替换的文字"></label>'
+      +'<label class="f"><span>替换为</span><input id="frTo" type="text" placeholder="留空＝删除"></label>'
+    +'</div>'
+    +'<div style="display:flex;gap:14px;align-items:center;margin:2px 0 12px;flex-wrap:wrap">'
+      +'<label class="mini" style="display:flex;align-items:center;gap:4px"><input type="checkbox" id="frCs" checked style="width:auto">区分大小写</label>'
+      +'<span class="mini">范围：正文、概要、标题、词条、别名、字段、对话、任务</span>'
+    +'</div>'
+    +'<div id="frOut" style="max-height:46vh;overflow:auto"><div class="mini">输入要查找的文字，结果会实时列出</div></div>',
+    '<button class="btn" data-act="closeModal">取消</button>'
+    +'<button class="btn" data-act="frPreview">刷新预览</button>'
+    +'<button class="btn primary" data-act="frRun">替换全部</button>', true);
+}
+function frPaint(){
+  const q=((document.getElementById('frQ')||{}).value)||'';
+  const csEl=document.getElementById('frCs');
+  const cs=csEl?!!csEl.checked:true;
+  const out=document.getElementById('frOut'); if(!out) return;
+  if(!q){ out.innerHTML='<div class="mini">输入要查找的文字</div>'; return; }
+  const hits=frScan(q,cs);
+  const total=hits.reduce((s,h)=>s+h.count,0);
+  out.innerHTML='<div class="mini" style="margin-bottom:8px">命中 <b>'+total+'</b> 处 · 涉及 '+hits.length+' 个位置</div>'
+    +(hits.length?hits.map(h=>'<div style="display:flex;gap:10px;align-items:baseline;padding:6px 8px;border-bottom:1px solid var(--line)">'
+      +'<span style="flex:none;color:var(--dim2);font-size:11px;min-width:150px">'+esc(h.label)+'</span>'
+      +'<span style="flex:1;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(h.snippet||'')+'</span>'
+      +'<span class="mini" style="flex:none">×'+h.count+'</span></div>').join('')
+      :'<div class="mini">没有找到</div>');
+}
+function frApply(){
+  const q=((document.getElementById('frQ')||{}).value)||'';
+  const to=((document.getElementById('frTo')||{}).value)||'';
+  const csEl=document.getElementById('frCs');
+  const cs=csEl?!!csEl.checked:true;
+  if(!q) return toast('先填查找内容');
+  const hits=frScan(q,cs);
+  const total=hits.reduce((s,h)=>s+h.count,0);
+  if(!total) return toast('没有找到');
+  if(!confirm('把 '+total+' 处「'+q+'」替换成「'+(to||'（空）')+'」？\n替换前会自动存一版。')) return;
+  makeVersion();
+  const n=frRun(q,to,cs);
+  touch(); render();
+  toast('已替换 '+n+' 处');
+}
+
 /* ---------- 设置 ---------- */
 function viewSetup(){
   const s=snaps();
@@ -1887,7 +2145,18 @@ function viewSetup(){
     +'<button class="btn" data-act="exportJson">导出 JSON 备份</button>'
     +'<button class="btn" data-act="importJson">导入 JSON</button>'
     +'<button class="btn" data-act="saveVer">存一版</button>'
+    +'<button class="btn" data-act="openFr" title="Ctrl+H">查找替换</button>'
     +'</div>';
+  h+='<div class="curve" style="padding:18px;margin-bottom:18px">'
+    +'<h4 style="font-size:11px;letter-spacing:.14em;color:var(--dim2);margin:0 0 10px">本地备份 · 文件夹</h4>'
+    +'<div class="mini" style="margin-bottom:10px;line-height:1.9">选一个文件夹，之后每 10 分钟自动写一份 <b>创作台-时间.json</b>，只保留最近 30 份，另有一份 <b>最新.json</b> 始终是最新。<br>'
+    +'这是浏览器存储之外的第二道保险：清缓存、换电脑、浏览器崩了，文件还在。</div>'
+    +'<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">'
+    +'<button class="btn'+(BK.handle?'':' primary')+'" data-act="bkPick">'+(BK.handle?'换个文件夹':'选择备份文件夹')+'</button>'
+    +'<button class="btn" data-act="bkNow" '+(BK.handle?'':'disabled')+'>立即备份</button>'
+    +(BK.handle&&!BK.granted?'<button class="btn primary" data-act="bkGrant">重新授权</button>':'')
+    +'<span class="mini" id="bkStatus">'+esc(bkStatusText())+'</span>'
+    +'</div></div>';
   const sy=DB.sync||{};  h+='<div class="curve" style="padding:18px;margin-bottom:18px">'
     +'<h4 style="font-size:11px;letter-spacing:.14em;color:var(--dim2);margin:0 0 12px">云备份 · 私有仓库</h4>'
     +'<div style="display:grid;grid-template-columns:1.3fr 110px 1.2fr;gap:10px">'
@@ -2136,6 +2405,12 @@ const ACT={
     touch(); render();
     toast(DB.ui.richEdit?'编辑区：引用显示成方框':'编辑区：纯文本');
   },
+  bkPick(){ bkPickDir(); },
+  bkNow(){ bkWrite(true); },
+  bkGrant(){ bkRequestPerm(); },
+  openFr(){ openFrModal(); },
+  frPreview(){ frPaint(); },
+  frRun(){ frApply(); },
   addScene(el){ addNodeSmart('scene'); },
   openNode(el){ openNodeById(el.dataset.id); },
   nodeMenu(){
@@ -3210,6 +3485,7 @@ document.addEventListener('input',e=>{
   const tg=e.target;
   if(tg.id==='eText'&&tg.isContentEditable){ if(!COMPOSING) syncCE(); return; }
   if(tg.id==='refQ'){ REFQ=tg.value; paintRef(); return; }
+  if(tg.id==='frQ'){ frPaint(); return; }
   if(tg.id==='pq'){ palIdx=0; renderPalette(tg.value); return; }
   const f=tg.dataset&&tg.dataset.itemField;
   if(f){
@@ -3291,6 +3567,7 @@ document.addEventListener('keydown',e=>{
   const tag=(e.target.tagName||'').toLowerCase();
   const typing=tag==='input'||tag==='textarea'||tag==='select';
   if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'){ e.preventDefault(); openPalette(); return; }
+  if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='h'){ e.preventDefault(); openFrModal(); return; }
   if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='s'){ e.preventDefault(); persist(); toast('已保存'); return; }
   if((e.key==='Delete'||e.key==='Backspace')&&DB.ui.selLink&&!typing){
     e.preventDefault();
@@ -3392,6 +3669,7 @@ function init(){
     if(DB.__cleaned||!localStorage.getItem(KEY)){ delete DB.__cleaned; persist(); }
   }catch(e){}
   if(!storageOK) warn('浏览器禁用了本地存储：修改不会被保存，请用「导出 JSON」备份。');
+  try{ if(typeof indexedDB!=='undefined') bkLoad().then(()=>{ paintBk(); bkMaybe(); }); }catch(e){}
 }
 setTimeout(()=>{},0);
 init();
