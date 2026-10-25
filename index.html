@@ -275,6 +275,18 @@ label.f>span{display:block;font-size:11.5px;color:var(--dim);margin-bottom:4px;l
 .planlinks{position:absolute;left:0;top:0;width:2600px;height:1800px;pointer-events:none}
 .planlinks path{fill:none;stroke:var(--line2);stroke-width:2}
 .planlinks path.hi{stroke:var(--accent)}
+.planlinks path.free{stroke:var(--accent);stroke-dasharray:7 5;pointer-events:stroke;cursor:pointer}
+.planlinks path.free:hover{stroke-width:3}
+.planboard{display:flex;flex:1;min-height:0}
+.planrail{width:54px;flex:none;background:var(--panel);border-right:1px solid var(--line);
+  display:flex;flex-direction:column;align-items:center;gap:6px;padding:12px 0}
+.planrail button{width:36px;height:34px;border:1px solid transparent;border-radius:8px;background:transparent;
+  cursor:pointer;font-size:15px;color:var(--dim);line-height:1;padding:0}
+.planrail button:hover{background:var(--hover);color:var(--ink)}
+.planrail button.on{background:var(--accent);border-color:var(--accent);color:#fff8ef}
+.planrail .sep{width:22px;height:1px;background:var(--line);margin:3px 0}
+.plancanvas.linkmode .pcard{cursor:crosshair}
+.pcard.anc{box-shadow:0 0 0 3px #96583a55}
 .pcard{position:absolute;width:210px;padding:9px 12px 10px;background:var(--panel);border:1px solid var(--line2);
   border-left:4px solid var(--accent);border-radius:9px;box-shadow:0 2px 12px #3a2a1214;cursor:grab;user-select:none}
 .pcard:hover{box-shadow:0 4px 18px #3a2a1222}
@@ -1409,7 +1421,8 @@ document.addEventListener('dblclick',async function(e){
 const PLAN_DC=['#96583a','#3f6b52','#3c5a8a','#8a5a9c','#a1742c','#7d7466'];
 const PLAN_CW=210, PLAN_HGAP=300, PLAN_VGAP=92;
 function ensurePlan(){
-  if(!DB.plan||typeof DB.plan!=='object'||!Array.isArray(DB.plan.nodes)) DB.plan={nodes:[],updatedAt:0};
+  if(!DB.plan||typeof DB.plan!=='object'||!Array.isArray(DB.plan.nodes)) DB.plan={nodes:[],links:[],updatedAt:0};
+  if(!Array.isArray(DB.plan.links)) DB.plan.links=[];
   return DB.plan;
 }
 function planBy(id){ return ensurePlan().nodes.find(n=>n.id===id)||null; }
@@ -1418,50 +1431,62 @@ function planRoots(){ return ensurePlan().nodes.filter(n=>!n.parentId||!planBy(n
 function planDepth(n){ let d=0,c=n,g=0; while(c&&c.parentId&&g++<60){ c=planBy(c.parentId); if(!c) break; d++; } return d; }
 function planColorOf(n){ return PLAN_DC[Math.min(planDepth(n),PLAN_DC.length-1)]; }
 function planNewId(){ return 'pl_'+Date.now().toString(36)+Math.random().toString(36).slice(2,6); }
+function planCurve(a,b){
+  const ax=(a.x||0), ay=(a.y||0)+24, bx=(b.x||0), by=(b.y||0)+24;
+  const right=bx>=ax;
+  const x1=right?ax+PLAN_CW:ax, y1=ay;
+  const x2=right?bx:bx+PLAN_CW, y2=by;
+  const mx=(x1+x2)/2;
+  return 'M'+x1+' '+y1+' C'+mx+' '+y1+' '+mx+' '+y2+' '+x2+' '+y2;
+}
 function planPaths(){
   let s='';
   ensurePlan().nodes.forEach(n=>{
     if(!n.parentId) return;
     const a=planBy(n.parentId); if(!a) return;
-    const x1=(a.x||0)+PLAN_CW, y1=(a.y||0)+24;
-    const x2=(n.x||0), y2=(n.y||0)+24;
-    const mx=(x1+x2)/2;
-    s+='<path d="M'+x1+' '+y1+' C'+mx+' '+y1+' '+mx+' '+y2+' '+x2+' '+y2+'"></path>';
+    s+='<path d="'+planCurve(a,n)+'"></path>';
+  });
+  ensurePlan().links.forEach(l=>{
+    const a=planBy(l.a), b=planBy(l.b); if(!a||!b) return;
+    s+='<path class="free" data-act="planUnlink" data-id="'+l.id+'" d="'+planCurve(a,b)+'"></path>';
   });
   return s;
 }
 function viewPlan(){
   const p=ensurePlan();
   const z=DB.ui.planZoom||1;
-  let h='<div class="boardpage"><div class="mtoolbar">'
-    +'<b style="font-family:var(--serif);letter-spacing:.1em">规划</b>'
-    +'<button class="btn sm primary" data-act="planAdd">＋ 主题</button>'
-    +'<button class="btn sm" data-act="planChild">＋ 分支</button>'
-    +'<button class="btn sm" data-act="planAuto">整理</button>'
-    +'<button class="btn sm" data-act="planPresent">'+(DB.ui.planBig?'退出展示':'展示')+'</button>'
-    +'<div style="flex:1"></div>'
-    +'<span class="mini">双击改字 · Tab 子级 · Enter 同级 · Delete 删除</span>'
-    +'<button class="btn sm ghost" data-act="planZoom" data-v="-">−</button>'
-    +'<button class="btn sm ghost" data-act="planZoom" data-v="0">'+Math.round(z*100)+'%</button>'
-    +'<button class="btn sm ghost" data-act="planZoom" data-v="+">＋</button>'
+  const lm=!!DB.ui.planLink;
+  let h='<div class="boardpage"><div class="planboard">'
+    +'<div class="planrail">'
+    +'<button data-act="planAdd" title="新建主题">＋</button>'
+    +'<button data-act="planChild" title="加子级（Tab）">↳</button>'
+    +'<button class="'+(lm?'on':'')+'" data-act="planLink" title="连线：先点一张，再点另一张">／</button>'
+    +'<div class="sep"></div>'
+    +'<button data-act="planAuto" title="整理成树">☰</button>'
+    +'<button data-act="planPresent" title="展示模式">⛶</button>'
+    +'<div class="sep"></div>'
+    +'<button data-act="planZoom" data-v="+">＋</button>'
+    +'<span class="mini" style="font-size:10px">'+Math.round(z*100)+'%</span>'
+    +'<button data-act="planZoom" data-v="-">−</button>'
     +'</div>'
-    +'<div class="planwrap" id="planwrap"><div class="plancanvas'+(DB.ui.planBig?' planbig':'')+'" id="plancanvas" style="zoom:'+z+'">'
+    +'<div class="planwrap" id="planwrap"><div class="plancanvas'+(DB.ui.planBig?' planbig':'')+(lm?' linkmode':'')+'" id="plancanvas" style="zoom:'+z+'">'
     +'<svg class="planlinks" id="planlinks">'+planPaths()+'</svg>';
   if(!p.nodes.length){
     h+='<div style="position:absolute;left:70px;top:90px;color:var(--dim2);font-family:var(--serif);line-height:2.1">'
-      +'点「＋ 主题」放一个中心，然后 Tab 一级级长分支。<br>'
-      +'<span class="mini">双击卡片改文字 · 拖卡片微调位置 · 「整理」一键排成树</span></div>';
+      +'点左边「＋」放一个主题，然后 Tab 一级级长分支。<br>'
+      +'<span class="mini">双击卡片改文字 · 拖卡片微调 · 「／」连线 · 「☰」整理</span></div>';
   }
   p.nodes.forEach(n=>{
     const sel=DB.ui.planSel===n.id;
-    h+='<div class="pcard'+(sel?' sel':'')+'" data-act="planSel" data-id="'+n.id+'"'
+    const anc=DB.ui.planLinkA===n.id;
+    h+='<div class="pcard'+(sel?' sel':'')+(anc?' anc':'')+'" data-act="planSel" data-id="'+n.id+'"'
       +' style="left:'+(n.x||0)+'px;top:'+(n.y||0)+'px;border-left-color:'+planColorOf(n)+'">'
       +'<button class="pdel" data-act="planDel" data-id="'+n.id+'" title="删除">×</button>'
       +'<div class="pt" data-field="title">'+esc(n.title||'新主题')+'</div>'
       +'<div class="pn'+(n.note?'':' ph')+'" data-field="note">'+esc(n.note||'双击加备注')+'</div>'
       +'</div>';
   });
-  h+='</div></div></div>';
+  h+='</div></div></div></div>';
   return h;
 }
 function planRedraw(){
@@ -1494,12 +1519,14 @@ function planInline(id,field){
   const card=document.querySelector('.pcard[data-id="'+id+'"]');
   const n=planBy(id); if(!card||!n) return;
   const el=card.querySelector('[data-field="'+field+'"]'); if(!el) return;
-  el.contentEditable='true';
   el.classList.remove('ph');
-  if(el.classList.contains('pn')&&n.note==null) el.textContent='';
+  if(field==='note') el.textContent=n.note||'';
+  el.contentEditable='true';
   el.focus();
   try{
-    const r=document.createRange(); r.selectNodeContents(el); r.collapse(false);
+    const r=document.createRange();
+    if(field==='note'&&!n.note){ r.selectNodeContents(el); r.collapse(true); }
+    else { r.selectNodeContents(el); r.collapse(false); }
     const s=window.getSelection(); s.removeAllRanges(); s.addRange(r);
   }catch(e){}
   let closed=false;
@@ -1546,7 +1573,7 @@ document.addEventListener('dblclick',function(e){
   const card=e.target.closest('.pcard');
   if(card){
     const f=e.target.closest('[data-field]');
-    planInline(card.dataset.id,f?f.dataset.field:'title');
+    if(f){ planInline(card.dataset.id,f.dataset.field); return; }
     return;
   }
   const r=cv.getBoundingClientRect();
@@ -1555,7 +1582,7 @@ document.addEventListener('dblclick',function(e){
     x:Math.round((e.clientX-r.left)/z),y:Math.round((e.clientY-r.top)/z)};
   ensurePlan().nodes.push(n); ensurePlan().updatedAt=now();
   DB.ui.planSel=n.id; touch(); render();
-  setTimeout(()=>planInline(n.id,'title'),40);
+  setTimeout(()=>planInline(n.id,'title'),60);
 });
 document.addEventListener('wheel',function(e){
   const el=e.target.closest?e.target.closest('#planwrap'):null;
@@ -3161,7 +3188,7 @@ const ACT={
     const n={id:planNewId(),parentId:null,title:'新主题',note:'',x:80,y:80};
     ensurePlan().nodes.push(n); ensurePlan().updatedAt=now();
     DB.ui.planSel=n.id; planLayoutAll(); touch(); render();
-    setTimeout(()=>planInline(n.id,'title'),50);
+    setTimeout(()=>planInline(n.id,'title'),60);
   },
   planChild(){
     const sel=planBy(DB.ui.planSel);
@@ -3169,7 +3196,7 @@ const ACT={
     const n={id:planNewId(),parentId:sel.id,title:'新分支',note:'',x:(sel.x||0)+PLAN_HGAP,y:(sel.y||0)};
     ensurePlan().nodes.push(n); ensurePlan().updatedAt=now();
     DB.ui.planSel=n.id; planLayoutAll(); touch(); render();
-    setTimeout(()=>planInline(n.id,'title'),50);
+    setTimeout(()=>planInline(n.id,'title'),60);
   },
   planSibling(){
     const sel=planBy(DB.ui.planSel);
@@ -3177,7 +3204,39 @@ const ACT={
     const n={id:planNewId(),parentId:sel.parentId||null,title:'新分支',note:'',x:(sel.x||0),y:(sel.y||0)+PLAN_VGAP};
     ensurePlan().nodes.push(n); ensurePlan().updatedAt=now();
     DB.ui.planSel=n.id; planLayoutAll(); touch(); render();
-    setTimeout(()=>planInline(n.id,'title'),50);
+    setTimeout(()=>planInline(n.id,'title'),60);
+  },
+  planLink(){
+    DB.ui.planLink=!DB.ui.planLink;
+    DB.ui.planLinkA=null;
+    render();
+    toast(DB.ui.planLink?'连线模式：点第一张，再点第二张':'已退出连线');
+  },
+  planUnlink(el){
+    const id=el.dataset.id;
+    DB.plan.links=(DB.plan.links||[]).filter(l=>l.id!==id);
+    ensurePlan().updatedAt=now(); touch(); render(); toast('已删除这条连线');
+  },
+  planSel(el){
+    const id=el.dataset.id;
+    if(DB.ui.planLink){
+      if(!DB.ui.planLinkA){
+        DB.ui.planLinkA=id;
+        document.querySelectorAll('.pcard').forEach(function(c){ c.classList.toggle('anc',c.dataset.id===id); });
+        toast('再点一张卡片完成连线');
+        return;
+      }
+      if(DB.ui.planLinkA!==id){
+        ensurePlan().links.push({id:'lk_'+Date.now().toString(36)+Math.random().toString(36).slice(2,5),a:DB.ui.planLinkA,b:id});
+        ensurePlan().updatedAt=now(); touch();
+        DB.ui.planLinkA=null; render(); toast('已连线');
+      }
+      return;
+    }
+    DB.ui.planSel=id;
+    document.querySelectorAll('.pcard').forEach(function(c){
+      if(c.dataset.id===id) c.classList.add('sel'); else c.classList.remove('sel');
+    });
   },
   async planDel(el){
     const id=(el&&el.dataset&&el.dataset.id)||DB.ui.planSel;
@@ -3186,14 +3245,9 @@ const ACT={
     if(!await uiConfirm('删除「'+(n.title||'')+'」？它下面的分支会上移一级。','删除卡片')) return;
     planKids(id).forEach(k=>{ k.parentId=n.parentId||null; });
     DB.plan.nodes=DB.plan.nodes.filter(x=>x.id!==id);
+    DB.plan.links=(DB.plan.links||[]).filter(l=>l.a!==id&&l.b!==id);
     DB.ui.planSel=null; ensurePlan().updatedAt=now();
     planLayoutAll(); touch(); render();
-  },
-  planSel(el){
-    DB.ui.planSel=el.dataset.id;
-    document.querySelectorAll('.pcard').forEach(function(c){
-      if(c.dataset.id===DB.ui.planSel) c.classList.add('sel'); else c.classList.remove('sel');
-    });
   },
   planAuto(){ planLayoutAll(); touch(); render(); toast('已整理成树'); },
   planZoom(el){
@@ -3974,7 +4028,7 @@ function fixNode(n){
 }
 function init(){
   DB=load();
-  DB.ui=Object.assign({tab:'write',nodeId:null,entryId:null,charId:null,theme:'paper',filter:'',q:'',preview:false,zen:false,sub:'outline',collapsed:[],itemSrv:'',richEdit:true,planSel:null,planZoom:1,planBig:false},DB.ui||{});
+  DB.ui=Object.assign({tab:'write',nodeId:null,entryId:null,charId:null,theme:'paper',filter:'',q:'',preview:false,zen:false,sub:'outline',collapsed:[],itemSrv:'',richEdit:true,planSel:null,planZoom:1,planBig:false,planLink:false,planLinkA:null},DB.ui||{});
   if(!DB.plan||typeof DB.plan!=='object'||!Array.isArray(DB.plan.nodes)) DB.plan={nodes:[],updatedAt:0};
   if(!Array.isArray(DB.ui.collapsed)) DB.ui.collapsed=[];
   if(!Array.isArray(DB.assets)) DB.assets=[];
