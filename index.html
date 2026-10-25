@@ -406,6 +406,18 @@ table.mx td input:focus{background:var(--chip);box-shadow:none}
 .tlrow .t{width:130px;color:var(--accent);font-size:12px;flex:none}
 .tlrow .ti{font-family:var(--serif);font-size:14px;flex:1}
 .tlrow .ch{width:118px;font-size:12px;color:var(--dim);flex:none}
+@media (max-width:1180px){
+  .refpage{grid-template-columns:170px 240px minmax(0,1fr)}
+  .planrail{width:64px}
+  .planrail button{width:52px;font-size:10px}
+  .rfdetail{padding:16px 18px 34px}
+}
+@media (max-width:900px){
+  .refpage{grid-template-columns:140px minmax(0,1fr)}
+  .refcol.mid{border-right:0}
+  .rfdetail{grid-column:1/-1;border-top:1px solid var(--line)}
+  .rfmeta{grid-template-columns:1fr}
+}
 </style>
 </head>
 <body>
@@ -638,64 +650,152 @@ function snapshot(reason){
 
 /* ---------- 版本存档 ---------- */
 const VKEY='story-desk.versions';
-function versions(){ try{ return JSON.parse(localStorage.getItem(VKEY)||'[]'); }catch(e){ return []; } }
-function saveVersions(l){ try{ localStorage.setItem(VKEY,JSON.stringify(l)); }catch(e){ warn('版本写不进去（本地空间可能满了）：'+e.message); } }
+const VINDEX='story-desk.vindex';
+let VMETA=null;
+function idbPut(store,key,val){
+  return idbOpen().then(db=>new Promise((res,rej)=>{
+    const tx=db.transaction(store,'readwrite'); tx.objectStore(store).put(val,key);
+    tx.oncomplete=()=>res(true); tx.onerror=()=>rej(tx.error);
+  }));
+}
+function idbGet(store,key){
+  return idbOpen().then(db=>new Promise((res,rej)=>{
+    const tx=db.transaction(store,'readonly');
+    const q=tx.objectStore(store).get(key);
+    q.onsuccess=()=>res(q.result); q.onerror=()=>rej(q.error);
+  }));
+}
+function idbDel(store,key){
+  return idbOpen().then(db=>new Promise((res,rej)=>{
+    const tx=db.transaction(store,'readwrite'); tx.objectStore(store).delete(key);
+    tx.oncomplete=()=>res(true); tx.onerror=()=>rej(tx.error);
+  }));
+}
 function vKind(v){ return (v&&v.kind==='auto')?'auto':'manual'; }
 function vId(v){ return (v&&v.id)?v.id:('m'+(v&&v.n||0)); }
-function vTime(v){ return new Date(v&&v.at||0).toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'}); }
+function vTime(v){ return new Date((v&&v.at)||0).toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'}); }
 function vName(v){ return vKind(v)==='auto'?vTime(v):('v'+(v&&v.n||'?')); }
 function vDay(v){ const d=new Date((v&&v.at)||0), p=n=>String(n).padStart(2,'0'); return p(d.getMonth()+1)+'-'+p(d.getDate()); }
+function vmeta(){
+  if(VMETA) return VMETA;
+  try{ VMETA=JSON.parse(localStorage.getItem(VINDEX)||'[]'); }catch(e){ VMETA=[]; }
+  if(!Array.isArray(VMETA)) VMETA=[];
+  return VMETA;
+}
+function vSaveIndex(){ try{ localStorage.setItem(VINDEX,JSON.stringify(vmeta())); }catch(e){} }
+function versions(){ return vmeta(); }
+async function vMigrate(){
+  try{
+    const raw=localStorage.getItem(VKEY);
+    if(!raw) return;
+    const old=JSON.parse(raw);
+    if(Array.isArray(old)&&old.length){
+      const meta=vmeta();
+      for(const v of old){
+        const id=v.id||('m'+(v.n||0));
+        if(!meta.some(x=>x.id===id)){
+          await idbPut('versions',id,v.data||'{}');
+          meta.push({id:id,kind:v.kind||'manual',n:(v.n==null?null:v.n),at:v.at||0,label:v.label||'',
+            words:v.words||0,chapters:v.chapters||0,bytes:(v.data||'').length});
+        }
+      }
+      VMETA=meta.sort((a,b)=>(b.at||0)-(a.at||0));
+      vSaveIndex();
+    }
+    localStorage.removeItem(VKEY);
+  }catch(e){}
+}
+let IDB_OK=null;
+function idbCheck(){
+  return new Promise(res=>{
+    if(typeof indexedDB==='undefined') return res(false);
+    let done=false;
+    const timer=setTimeout(()=>{ if(!done){ done=true; res(false); } },800);
+    try{
+      const r=indexedDB.open('storydesk',2);
+      r.onsuccess=()=>{ if(!done){ done=true; clearTimeout(timer); try{ r.result.close(); }catch(e){} res(true); } };
+      r.onerror=()=>{ if(!done){ done=true; clearTimeout(timer); res(false); } };
+      r.onblocked=()=>{ if(!done){ done=true; clearTimeout(timer); res(false); } };
+    }catch(e){ if(!done){ done=true; clearTimeout(timer); res(false); } }
+  });
+}
+function vLoad(){
+  return idbCheck().then(ok=>{
+    IDB_OK=ok;
+    return ok?vMigrate().then(()=>{ vmeta(); }):null;
+  }).then(()=>{ vmeta(); });
+}
+function vPrune(){
+  // IDB 不可用时，靠 localStorage 索引里的 data 兜底，这里只做数量裁剪
+  const list=vmeta();
+  let an=0, mn=0, total=0;
+  const keep=[];
+  list.forEach(v=>{
+    const kk=vKind(v);
+    if(kk==='auto'){ if(an>=5) return; an++; }
+    else{ if(mn>=12) return; mn++; }
+    total+=(v.bytes||0);
+    if(total<48*1024*1024) keep.push(v);
+  });
+  const dropped=list.filter(v=>keep.indexOf(v)<0);
+  VMETA=keep; vSaveIndex();
+  dropped.forEach(v=>{ if(IDB_OK===true){ try{ idbDel('versions',vId(v)).catch(()=>{}); }catch(e){} } });
+}
 function makeVersion(label,kind){
   try{
     const k=(kind==='auto')?'auto':'manual';
-    const list=versions();
+    const list=vmeta();
     const manual=list.filter(v=>vKind(v)==='manual');
     const n=(k==='manual')?(manual.reduce((m,v)=>Math.max(m,v.n||0),0)+1):null;
-    const data=JSON.stringify({v:2,meta:DB.meta,entries:DB.entries,nodes:DB.nodes,rels:DB.rels||[],
-      events:DB.events||[],threads:DB.threads||[],dialogues:DB.dialogues||[],quests:DB.quests||[],map:DB.map||{}});
+    const data=JSON.stringify({v:3,meta:DB.meta,entries:DB.entries||[],nodes:DB.nodes||[],rels:DB.rels||[],
+      events:DB.events||[],threads:DB.threads||[],dialogues:DB.dialogues||[],quests:DB.quests||[],
+      map:DB.map||{},plan:DB.plan||{},refs:DB.refs||[]});
     const rec={id:(k==='manual'?('m'+n):('a'+now()))+'-'+Math.random().toString(36).slice(2,6),
-      kind:k,n:n,at:now(),label:label||'',words:totalWords(),chapters:chapters().length,data:data};
+      kind:k,n:n,at:now(),label:label||'',words:totalWords(),chapters:chapters().length,bytes:data.length};
+    if(IDB_OK!==true){ rec.data=data; } else { try{ idbPut('versions',rec.id,data).catch(()=>{}); }catch(e){} }
     list.unshift(rec);
-    const maxAuto=5, maxManual=12;
-    let total=0, an=0, mn=0;
-    const keep=[];
-    list.forEach(v=>{
-      const kk=vKind(v);
-      if(kk==='auto'){ if(an>=maxAuto) return; an++; }
-      else{ if(mn>=maxManual) return; mn++; }
-      total+=v.data.length;
-      if(total<3.2*1024*1024) keep.push(v);
-    });
-    saveVersions(keep);
+    VMETA=list; vSaveIndex(); vPrune();
     if(!DB.sync) DB.sync={};
     if(k==='manual') DB.sync.lastVersion=n;
     persist();
     return rec;
   }catch(e){ warn('存档失败：'+e.message); return null; }
 }
-function versionDiff(id){
-  const v=versions().find(x=>vId(x)===id);
+async function vData(id){
+  const m=vmeta().find(x=>vId(x)===id);
+  if(m&&m.data) return m.data;
+  if(IDB_OK!==true) return null;
+  try{ return await idbGet('versions',id); }catch(e){ return null; }
+}
+async function versionDiff(id){
+  const v=vmeta().find(x=>vId(x)===id);
   if(!v) return null;
+  const raw=await vData(id);
+  if(!raw) return null;
   let old;
-  try{ old=JSON.parse(v.data); }catch(e){ return null; }
+  try{ old=JSON.parse(raw); }catch(e){ return null; }
   const pick=d=>{ const m={}; (d.nodes||[]).forEach(x=>{ if(x.type==='chapter') m[x.id]=x; }); return m; };
   const o=pick(old), c=pick(DB);
-  const ids=Object.keys(o).concat(Object.keys(c).filter(id=>!o[id]));
+  const ids=Object.keys(o).concat(Object.keys(c).filter(x=>!o[x]));
   const rows=[];
-  ids.forEach(id=>{
-    const a=o[id], b=c[id];
+  ids.forEach(x=>{
+    const a=o[x], b=c[x];
     if(a&&!b) rows.push({t:'del',title:a.title,old:chars(a.text),now:0});
     else if(!a&&b) rows.push({t:'add',title:b.title,old:0,now:chars(b.text)});
     else if(String(a.text||'')!==String(b.text||'')) rows.push({t:'mod',title:b.title,old:chars(a.text),now:chars(b.text)});
   });
+  const pn=DB.plan&&DB.plan.nodes?DB.plan.nodes.length:0;
+  const opn=old.plan&&old.plan.nodes?old.plan.nodes.length:0;
   return {id:vId(v),n:v.n,kind:vKind(v),at:v.at,label:v.label,rows:rows,
     oldWords:v.words,nowWords:totalWords(),oldCh:v.chapters,nowCh:chapters().length,
     dEntries:(DB.entries||[]).length-((old.entries||[]).length),
     dDlg:(DB.dialogues||[]).length-((old.dialogues||[]).length),
-    dQuest:(DB.quests||[]).length-((old.quests||[]).length)};
+    dQuest:(DB.quests||[]).length-((old.quests||[]).length),
+    dRefs:(DB.refs||[]).length-((old.refs||[]).length),
+    dPlan:pn-opn};
 }
-function showDiff(id){
-  const d=versionDiff(id);
+async function showDiff(id){
+  const d=await versionDiff(id);
   if(!d) return warn('这一版读不出来');
   const sgn=x=>x>0?'+'+x:(x<0?String(x):'0');
   let b='<div style="display:flex;gap:16px;flex-wrap:wrap;font-size:12.5px;margin-bottom:14px">'
@@ -703,22 +803,34 @@ function showDiff(id){
     +'<span>章 <b>'+d.oldCh+' → '+d.nowCh+'</b></span>'
     +'<span>词条 '+sgn(d.dEntries)+'</span>'
     +'<span>对话 '+sgn(d.dDlg)+'</span>'
-    +'<span>任务 '+sgn(d.dQuest)+'</span></div>';
+    +'<span>任务 '+sgn(d.dQuest)+'</span>'
+    +'<span>素材 '+sgn(d.dRefs)+'</span>'
+    +'<span>看板 '+sgn(d.dPlan)+'</span></div>';
   b+=d.rows.length
     ? '<div>'+d.rows.map(r=>'<div style="display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line);font-size:12.5px">'
         +'<span class="chip">'+({add:'新增',del:'删除',mod:'修改'})[r.t]+'</span>'
         +'<b style="flex:1;font-weight:500">'+esc(r.title||'（未命名）')+'</b>'
         +'<span class="mini">'+r.old+' → '+r.now+' 字（'+sgn(r.now-r.old)+'）</span></div>').join('')+'</div>'
-    : '<div class="hint">正文和这一版完全一样，改的是设定、对话或任务。</div>';
+    : '<div class="hint">正文和这一版完全一样，改的是设定、素材或看板。</div>';
   modal('对比 '+vName({kind:d.kind,n:d.n,at:d.at})+'（'+dt(d.at)+'）→ 现在', b, '<button class="btn" data-act="closeModal">关闭</button>');
 }
 async function restoreVersion(id){
-  const v=versions().find(x=>vId(x)===id);
+  const v=vmeta().find(x=>vId(x)===id);
   if(!v) return;
+  const raw=await vData(id);
+  if(!raw) return warn('这一版读不出来');
   const nm=vName(v);
-  if(!await uiConfirm('回到 '+nm+'（'+dt(v.at)+'）？\n当前内容会先存成一个新版本。')) return;
+  if(!await uiConfirm('回到 '+nm+'（'+dt(v.at)+'）？\n当前内容会先存成一个新版本。','恢复版本')) return;
   makeVersion('恢复前');
-  try{ DB=JSON.parse(v.data); }catch(e){ return warn('这个版本读不出来'); }
+  const keepAssets=DB.assets||[];
+  try{ DB=JSON.parse(raw); }catch(e){ return warn('这个版本读不出来'); }
+  DB.assets=keepAssets;
+  if(!DB.plan||typeof DB.plan!=='object') DB.plan={nodes:[],links:[],frames:[],stickers:[],updatedAt:0};
+  if(!Array.isArray(DB.plan.nodes)) DB.plan.nodes=[];
+  if(!Array.isArray(DB.plan.links)) DB.plan.links=[];
+  if(!Array.isArray(DB.plan.frames)) DB.plan.frames=[];
+  if(!Array.isArray(DB.plan.stickers)) DB.plan.stickers=[];
+  if(!Array.isArray(DB.refs)) DB.refs=[];
   DB.ui=Object.assign({tab:'write',nodeId:null,entryId:null,charId:null,dlgId:null,questId:null,charBoard:false,libBoard:false,itemSrv:'',itemSel:null,itemQ:'',theme:'paper',filter:'',q:'',preview:false,zen:false,sub:'outline'},DB.ui||{});
   if(!DB.sync) DB.sync={};
   if(vKind(v)==='manual') DB.sync.lastVersion=v.n;
@@ -1044,6 +1156,14 @@ function ctxHTML(n){
   const ck=checks().filter(x=>x.lv!=='ok').slice(0,4);
   h+='<h4>提醒</h4>';
   h+=ck.length?ck.map(x=>'<div class="note'+(x.lv==='bad'?' warn':'')+'" style="margin-bottom:6px">'+esc(x.t)+'</div>').join(''):'<div class="row">没有明显问题</div>';
+  try{
+    var __ids=list.map(function(e){return e.id;});
+    var __rel=(DB.refs||[]).filter(function(r){return (r.entryIds||[]).some(function(x){return __ids.indexOf(x)>=0;});});
+    if(__rel.length){
+      h+='<h4>本章参考（'+__rel.length+'）</h4>';
+      h+=__rel.slice(0,6).map(function(r){return '<div style="padding:4px 0;font-size:12px;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" data-act="openRef" data-id="'+r.id+'"><span style="color:var(--accent)">'+esc(r.kind)+'</span> '+esc(r.title||'未命名')+'</div>';}).join('');
+    }
+  }catch(e){}
   return h;
 }
 
@@ -1901,6 +2021,39 @@ function refsMarkdown(){
   });
   return L.join('\n');
 }
+function mdExtra(){
+  var L=[];
+  if((DB.refs||[]).length){
+    L.push("","## 六、参考资料","");
+    REF_KINDS.forEach(function(k){
+      var rs=(DB.refs||[]).filter(function(r){return r.kind===k;});
+      if(!rs.length) return;
+      L.push("### "+k,"");
+      rs.forEach(function(r,i){
+        var line=(i+1)+". "+(r.title||"未命名");
+        if(r.source) line+="　"+r.source;
+        if(r.url) line+="　"+r.url;
+        L.push(line);
+        if(r.body){ L.push("", String(r.body).split("\n").map(function(x){return "> "+x;}).join("\n"), ""); }
+      });
+      L.push("");
+    });
+  }
+  if(DB.plan&&DB.plan.nodes&&DB.plan.nodes.length){
+    L.push("","## 七、规划看板","");
+    var seenP={};
+    var walkP=function(n,d){
+      if(!n||seenP[n.id]) return;
+      seenP[n.id]=1;
+      L.push(new Array(d+1).join("  ")+"- "+(n.title||"未命名")+(n.note?"："+n.note:""));
+      DB.plan.nodes.filter(function(c){return c.parentId===n.id;}).forEach(function(c){ walkP(c,d+1); });
+    };
+    DB.plan.nodes.filter(function(n){ return !n.parentId||!DB.plan.nodes.some(function(x){return x.id===n.parentId;}); })
+      .forEach(function(n){ walkP(n,0); });
+    L.push("");
+  }
+  return L.join("\n");
+}
 const REF_COLOR={'文献':'#96583a','链接':'#3c5a8a','摘录':'#3f6b52','笔记':'#8a5a9c'};
 function refColor(k){ return REF_COLOR[k]||'#7d7466'; }
 function refBadge(k){ return '<span class="rfbadge" style="color:'+refColor(k)+'">'+esc(k)+'</span>'; }
@@ -1919,12 +2072,16 @@ function viewRefs(){
     }
     return true;
   });
+  const sk=DB.ui.refSort||'mod';
+  list.sort((a,b)=> sk==='title'? String(a.title||'').localeCompare(String(b.title||''),'zh') : (b.updatedAt||0)-(a.updatedAt||0));
   const cur=refBy(DB.ui.refId);
   let h='<div class="boardpage"><div class="mtoolbar">'
     +'<b style="font-family:var(--serif);letter-spacing:.1em">素材</b>'
     +'<button class="btn sm primary" data-act="refAdd">＋ 素材</button>'
     +'<input type="search" data-bind="ui.refQ" value="'+esc(DB.ui.refQ||'')+'" placeholder="搜标题 / 来源 / 正文 / 标签" style="width:280px">'
     +'<div style="flex:1"></div>'
+    +'<button class="btn sm '+(DB.ui.refSort==='title'?'primary':'ghost')+'" data-act="refSort" data-v="title">按标题</button>'
+    +'<button class="btn sm '+(DB.ui.refSort!=='title'?'primary':'ghost')+'" data-act="refSort" data-v="mod">按修改</button>'
     +'<span class="mini">'+all.length+' 条</span>'
     +'<button class="btn sm" data-act="refExport">导出参考文献</button>'
     +'</div>'
@@ -2549,27 +2706,17 @@ let BK={handle:null,name:'',busy:false,last:0};
 function bkSupported(){ return typeof window!=='undefined'&&!!window.showDirectoryPicker; }
 function idbOpen(){
   return new Promise((res,rej)=>{
-    const r=indexedDB.open('storydesk',1);
-    r.onupgradeneeded=()=>{ try{ r.result.createObjectStore('kv'); }catch(e){} };
+    const r=indexedDB.open('storydesk',2);
+    r.onupgradeneeded=()=>{
+      const db=r.result;
+      if(!db.objectStoreNames.contains('kv')) db.createObjectStore('kv');
+      if(!db.objectStoreNames.contains('versions')) db.createObjectStore('versions');
+      if(!db.objectStoreNames.contains('assets')) db.createObjectStore('assets');
+    };
     r.onsuccess=()=>res(r.result);
     r.onerror=()=>rej(r.error);
   });
-}
-function idbSet(k,v){
-  return idbOpen().then(db=>new Promise((res,rej)=>{
-    const t=db.transaction('kv','readwrite');
-    t.objectStore('kv').put(v,k);
-    t.oncomplete=()=>res(true); t.onerror=()=>rej(t.error);
-  }));
-}
-function idbGet(k){
-  return idbOpen().then(db=>new Promise((res,rej)=>{
-    const t=db.transaction('kv','readonly');
-    const q=t.objectStore('kv').get(k);
-    q.onsuccess=()=>res(q.result); q.onerror=()=>rej(q.error);
-  }));
-}
-function bkStamp(){
+}function bkStamp(){
   const d=new Date(), p=n=>String(n).padStart(2,'0');
   return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+'-'+p(d.getHours())+p(d.getMinutes())+p(d.getSeconds());
 }
@@ -2577,7 +2724,7 @@ async function bkLoad(){
   if(!bkSupported()) return;
   if(typeof indexedDB==='undefined') return;
   try{
-    const h=await idbGet('backupDir');
+    const h=await idbGet('kv','backupDir');
     if(h){ BK.handle=h; BK.name=h.name; try{ const q=await h.queryPermission({mode:'readwrite'}); BK.granted=(q==='granted'); }catch(e){} }
   }catch(e){}
 }
@@ -2586,7 +2733,7 @@ async function bkPickDir(){
   try{
     const h=await window.showDirectoryPicker({mode:'readwrite'});
     BK.handle=h; BK.name=h.name; BK.granted=true;
-    try{ idbSet('backupDir',h).catch(()=>{}); }catch(e){}
+    try{ idbPut('kv','backupDir',h).catch(()=>{}); }catch(e){}
     await bkWrite(true);
     toast('已连接备份文件夹「'+h.name+'」');
   }catch(e){
@@ -3590,6 +3737,7 @@ const ACT={
     setTimeout(()=>{ const el=document.querySelector('[data-ref-field="title"]'); if(el) el.focus(); },60);
   },
   refSel(el){ DB.ui.refId=el.dataset.id; render(); },
+  refSort(el){ DB.ui.refSort=el.dataset.v||'mod'; render(); },
   refKind(el){ DB.ui.refKind=el.dataset.v||''; render(); },
   refTag(el){ const tg=el.dataset.v||''; DB.ui.refTag=(DB.ui.refTag===tg?'':tg); render(); },
   refUnlink(el){
@@ -3873,7 +4021,9 @@ const ACT={
     const v=versions().find(x=>vId(x)===id);
     if(!v) return;
     if(!await uiConfirm('删除 '+vName(v)+'？删了就找不回来了。')) return;
-    saveVersions(versions().filter(x=>vId(x)!==id));
+    VMETA=versions().filter(x=>vId(x)!==id);
+    vSaveIndex();
+    try{ idbDel('versions',id).catch(()=>{}); }catch(e){}
     render(); toast('已删除 '+vName(v));
   },
   async delEntry(){
@@ -3933,10 +4083,13 @@ const ACT={
   },
   ghForce(){ closeModal(); return ghPush(true); },
   ghPull(){ return ghPull(); },
+  openRef(el){ DB.ui.tab="refs"; DB.ui.refId=el.dataset.id; render(); },
   pitem(el){
     const kind=el.dataset.kind, id=el.dataset.id;
     closePalette();
     if(kind==='node') openNodeById(id);
+    else if(kind==="ref"){ DB.ui.tab="refs"; DB.ui.refId=id; render(); }
+    else if(kind==="plan"){ DB.ui.tab="plan"; DB.ui.planSel=id; render(); }
     else { DB.ui.tab='lib'; openEntryById(id); render(); }
   },
   snap(){ snapshot('手动'); persist(); render(); toast('快照已保存'); },
@@ -4011,8 +4164,31 @@ function handleAct(el){
 
 /* ---------- 命令面板 ---------- */
 let palIdx=0, palItems=[];
+/* ---------- 全局撤销 ---------- */
+let UNDO=[];
+const UNDOABLE=['delSub','delOnly','planDel','planDelFrame','planDelStick','delEntry','delChar','delThread','delDlg','delQuest','refDel','menuDel','delVer','wipe','clearDemo'];
+function undoPush(){
+  try{
+    UNDO.push(JSON.stringify({nodes:DB.nodes,entries:DB.entries,refs:DB.refs,plan:DB.plan,
+      quests:DB.quests,dialogues:DB.dialogues,assets:DB.assets}));
+    if(UNDO.length>20) UNDO.shift();
+  }catch(e){}
+}
+function undoPop(){
+  const s=UNDO.pop();
+  if(!s) return false;
+  try{
+    const d=JSON.parse(s);
+    DB.nodes=d.nodes||[]; DB.entries=d.entries||[]; DB.refs=d.refs||[];
+    DB.plan=d.plan||{nodes:[],links:[],frames:[],stickers:[],updatedAt:0};
+    DB.quests=d.quests||[]; DB.dialogues=d.dialogues||[]; DB.assets=d.assets||[];
+    return true;
+  }catch(e){ return false; }
+}
 function paletteData(){
   const items=[];
+  (DB.refs||[]).forEach(r=>items.push({kind:'ref',id:r.id,label:r.title||'（未命名）',meta:'素材 · '+r.kind}));
+  (DB.plan&&DB.plan.nodes?DB.plan.nodes:[]).forEach(n=>items.push({kind:'plan',id:n.id,label:n.title||'（未命名）',meta:'看板卡片'}));
   DB.nodes.forEach(n=>items.push({kind:'node',id:n.id,label:n.title||'（未命名）',meta:typeLabel(n)}));
   DB.entries.forEach(e=>items.push({kind:'entry',id:e.id,label:e.title||'（未命名）',meta:ET[e.type].label}));
   return items;
@@ -4207,6 +4383,7 @@ function toMarkdown(){
       L.push('');
     });
   }
+  L.push('', mdExtra());
   return L.join('\n');
 }
 function toTxt(){
@@ -4222,6 +4399,7 @@ document.addEventListener('click',e=>{
   }
   if(el.tagName==='SELECT') return;
   e.preventDefault();
+  if(UNDOABLE.indexOf(el.dataset.act)>=0) undoPush();
   handleAct(el);
 });
 /* ---------- 树上拖拽 ---------- */
@@ -4472,6 +4650,10 @@ document.addEventListener('keydown',e=>{
   const typing=tag==='input'||tag==='textarea'||tag==='select';
   if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'){ e.preventDefault(); openPalette(); return; }
   if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='h'){ e.preventDefault(); openFrModal(); return; }
+  if((e.ctrlKey||e.metaKey)&&!e.shiftKey&&e.key.toLowerCase()==='z'&&!typing){
+    if(undoPop()){ e.preventDefault(); touch(); render(); toast('已撤销上一步'); }
+    return;
+  }
   if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='s'){ e.preventDefault(); persist(); toast('已保存'); return; }
   if(DB.ui.tab==='plan'&&!typing&&!e.ctrlKey&&!e.metaKey){
     const editing=document.activeElement&&document.activeElement.isContentEditable;
@@ -4584,7 +4766,8 @@ function init(){
     if(DB.__cleaned||!localStorage.getItem(KEY)){ delete DB.__cleaned; persist(); }
   }catch(e){}
   if(!storageOK) warn('浏览器禁用了本地存储：修改不会被保存，请用「导出 JSON」备份。');
-  try{ if(typeof indexedDB!=='undefined') bkLoad().then(()=>{ paintBk(); bkMaybe(); }); }catch(e){}
+  try{ if(typeof indexedDB!=='undefined') bkLoad().then(()=>{ paintBk(); bkMaybe(); });
+    vLoad().then(()=>{ try{ render(); }catch(e){} }); }catch(e){}
 }
 setTimeout(()=>{},0);
 init();
