@@ -537,31 +537,50 @@ function paintSaved(){
   const vn=(DB&&DB.sync&&DB.sync.lastVersion)?('v'+DB.sync.lastVersion+' · '):'';
   el.textContent=lastSave?(vn+'已保存 '+new Date(lastSave).toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'})):'本地';
 }
-function snapshot(reason){ makeVersion(reason||'自动'); }
+function snapshot(reason){
+  const r=String(reason||'自动');
+  return makeVersion(r==='自动'?'':r, r==='自动'?'auto':'manual');
+}
 
 /* ---------- 版本存档 ---------- */
 const VKEY='story-desk.versions';
 function versions(){ try{ return JSON.parse(localStorage.getItem(VKEY)||'[]'); }catch(e){ return []; } }
 function saveVersions(l){ try{ localStorage.setItem(VKEY,JSON.stringify(l)); }catch(e){ warn('版本写不进去（本地空间可能满了）：'+e.message); } }
-function makeVersion(label){
+function vKind(v){ return (v&&v.kind==='auto')?'auto':'manual'; }
+function vId(v){ return (v&&v.id)?v.id:('m'+(v&&v.n||0)); }
+function vTime(v){ return new Date(v&&v.at||0).toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'}); }
+function vName(v){ return vKind(v)==='auto'?vTime(v):('v'+(v&&v.n||'?')); }
+function vDay(v){ const d=new Date((v&&v.at)||0), p=n=>String(n).padStart(2,'0'); return p(d.getMonth()+1)+'-'+p(d.getDate()); }
+function makeVersion(label,kind){
   try{
+    const k=(kind==='auto')?'auto':'manual';
     const list=versions();
-    const n=((list[0]&&list[0].n)||0)+1;
+    const manual=list.filter(v=>vKind(v)==='manual');
+    const n=(k==='manual')?(manual.reduce((m,v)=>Math.max(m,v.n||0),0)+1):null;
     const data=JSON.stringify({v:2,meta:DB.meta,entries:DB.entries,nodes:DB.nodes,rels:DB.rels||[],
       events:DB.events||[],threads:DB.threads||[],dialogues:DB.dialogues||[],quests:DB.quests||[],map:DB.map||{}});
-    list.unshift({n:n,at:now(),label:label||'',words:totalWords(),chapters:chapters().length,data:data});
-    let total=0;
+    const rec={id:(k==='manual'?('m'+n):('a'+now()))+'-'+Math.random().toString(36).slice(2,6),
+      kind:k,n:n,at:now(),label:label||'',words:totalWords(),chapters:chapters().length,data:data};
+    list.unshift(rec);
+    const maxAuto=5, maxManual=12;
+    let total=0, an=0, mn=0;
     const keep=[];
-    list.forEach(v=>{ total+=v.data.length; if(keep.length<12&&total<3.2*1024*1024) keep.push(v); });
+    list.forEach(v=>{
+      const kk=vKind(v);
+      if(kk==='auto'){ if(an>=maxAuto) return; an++; }
+      else{ if(mn>=maxManual) return; mn++; }
+      total+=v.data.length;
+      if(total<3.2*1024*1024) keep.push(v);
+    });
     saveVersions(keep);
     if(!DB.sync) DB.sync={};
-    DB.sync.lastVersion=n;
+    if(k==='manual') DB.sync.lastVersion=n;
     persist();
-    return n;
-  }catch(e){ warn('存档失败：'+e.message); return 0; }
+    return rec;
+  }catch(e){ warn('存档失败：'+e.message); return null; }
 }
-function versionDiff(n){
-  const v=versions().find(x=>x.n===n);
+function versionDiff(id){
+  const v=versions().find(x=>vId(x)===id);
   if(!v) return null;
   let old;
   try{ old=JSON.parse(v.data); }catch(e){ return null; }
@@ -575,14 +594,14 @@ function versionDiff(n){
     else if(!a&&b) rows.push({t:'add',title:b.title,old:0,now:chars(b.text)});
     else if(String(a.text||'')!==String(b.text||'')) rows.push({t:'mod',title:b.title,old:chars(a.text),now:chars(b.text)});
   });
-  return {n:n,at:v.at,label:v.label,rows:rows,
+  return {id:vId(v),n:v.n,kind:vKind(v),at:v.at,label:v.label,rows:rows,
     oldWords:v.words,nowWords:totalWords(),oldCh:v.chapters,nowCh:chapters().length,
     dEntries:(DB.entries||[]).length-((old.entries||[]).length),
     dDlg:(DB.dialogues||[]).length-((old.dialogues||[]).length),
     dQuest:(DB.quests||[]).length-((old.quests||[]).length)};
 }
-function showDiff(n){
-  const d=versionDiff(n);
+function showDiff(id){
+  const d=versionDiff(id);
   if(!d) return warn('这一版读不出来');
   const sgn=x=>x>0?'+'+x:(x<0?String(x):'0');
   let b='<div style="display:flex;gap:16px;flex-wrap:wrap;font-size:12.5px;margin-bottom:14px">'
@@ -597,24 +616,25 @@ function showDiff(n){
         +'<b style="flex:1;font-weight:500">'+esc(r.title||'（未命名）')+'</b>'
         +'<span class="mini">'+r.old+' → '+r.now+' 字（'+sgn(r.now-r.old)+'）</span></div>').join('')+'</div>'
     : '<div class="hint">正文和这一版完全一样，改的是设定、对话或任务。</div>';
-  modal('对比 v'+d.n+'（'+dt(d.at)+'）→ 现在', b, '<button class="btn" data-act="closeModal">关闭</button>');
+  modal('对比 '+vName({kind:d.kind,n:d.n,at:d.at})+'（'+dt(d.at)+'）→ 现在', b, '<button class="btn" data-act="closeModal">关闭</button>');
 }
-function restoreVersion(n){
-  const v=versions().find(x=>x.n===n);
+function restoreVersion(id){
+  const v=versions().find(x=>vId(x)===id);
   if(!v) return;
-  if(!confirm('回到 v'+n+'（'+dt(v.at)+'）？\n当前内容会先存成一个新版本。')) return;
+  const nm=vName(v);
+  if(!confirm('回到 '+nm+'（'+dt(v.at)+'）？\n当前内容会先存成一个新版本。')) return;
   makeVersion('恢复前');
   try{ DB=JSON.parse(v.data); }catch(e){ return warn('这个版本读不出来'); }
   DB.ui=Object.assign({tab:'write',nodeId:null,entryId:null,charId:null,dlgId:null,questId:null,charBoard:false,libBoard:false,itemSrv:'',itemSel:null,itemQ:'',theme:'paper',filter:'',q:'',preview:false,zen:false,sub:'outline'},DB.ui||{});
   if(!DB.sync) DB.sync={};
-  DB.sync.lastVersion=n;
+  if(vKind(v)==='manual') DB.sync.lastVersion=v.n;
   DB.entries=(DB.entries||[]).map(fixEntry).filter(Boolean);
   DB.nodes=(DB.nodes||[]).map(fixNode).filter(Boolean);
   if(!Array.isArray(DB.dialogues)) DB.dialogues=[];
   if(!Array.isArray(DB.quests)) DB.quests=[];
   if(!DB.ui.nodeId||!nodeBy(DB.ui.nodeId)) DB.ui.nodeId=(chapters()[0]||{}).id||null;
   persist(); render();
-  toast('已回到 v'+n);
+  toast('已回到 '+nm);
 }
 function snaps(){ return versions(); }
 
@@ -2187,19 +2207,25 @@ function viewSetup(){
   h+='<h4 style="font-size:11px;letter-spacing:.14em;color:var(--dim2);margin:18px 0 8px">检查</h4>';
   h+=checks().map(x=>'<div class="note '+(x.lv==='bad'?'warn':'')+'" style="margin-bottom:6px">'+esc(x.t)+(x.s?'<div class="mini">'+esc(x.s)+'</div>':'')+'</div>').join('');
   h+='<h4 style="font-size:11px;letter-spacing:.14em;color:var(--dim2);margin:22px 0 8px">版本存档</h4>';
-  h+='<div style="display:flex;gap:10px;align-items:center;margin-bottom:10px">'
-    +'<button class="btn primary" data-act="saveVer">存一版</button>'
-    +'<span class="mini">'+(s.length?('最新 v'+s[0].n+' · '+dt(s[0].at)):'还没有版本')+'</span></div>';
-  h+=s.length?s.map(v=>'<div class="row" style="font-size:12.5px;padding:5px 0;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px">'
-      +'<b style="color:var(--accent);width:38px;flex:none">v'+v.n+'</b>'
-      +'<span style="color:var(--dim2);width:130px;flex:none">'+dt(v.at)+'</span>'
-      +'<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(v.label||'—')+'</span>'
+  const manV=s.filter(v=>vKind(v)==='manual');
+  const autV=s.filter(v=>vKind(v)==='auto');
+  const vrow=(v,isAuto)=>'<div class="row" style="font-size:12.5px;padding:5px 0;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px">'
+      +'<b style="color:var(--accent);width:'+(isAuto?'44':'38')+'px;flex:none">'+(isAuto?vTime(v):('v'+(v.n||'?')))+'</b>'
+      +'<span style="color:var(--dim2);width:130px;flex:none">'+(isAuto?vDay(v):dt(v.at))+'</span>'
+      +'<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(isAuto?'自动存档':(v.label||'—'))+'</span>'
       +'<span class="mini" style="flex:none">'+v.words+' 字 · '+v.chapters+' 章</span>'
-      +'<button class="btn sm ghost" data-act="diffVer" data-n="'+v.n+'">对比</button>'
-      +'<button class="btn sm ghost" data-act="restoreVer" data-n="'+v.n+'">恢复</button>'
-      +'<button class="btn sm ghost" data-act="delVer" data-n="'+v.n+'" style="color:var(--dim2)">✕</button>'
-      +'</div>').join('')
+      +'<button class="btn sm ghost" data-act="diffVer" data-id="'+vId(v)+'">对比</button>'
+      +'<button class="btn sm ghost" data-act="restoreVer" data-id="'+vId(v)+'">恢复</button>'
+      +'<button class="btn sm ghost" data-act="delVer" data-id="'+vId(v)+'" style="color:var(--dim2)">✕</button>'
+      +'</div>';
+  h+='<div style="display:flex;gap:10px;align-items:center;margin-bottom:8px">'
+    +'<button class="btn primary" data-act="saveVer">存一版</button>'
+    +'<span class="mini">'+(manV.length?('共 '+manV.length+' 版 · 最新 v'+manV[0].n+' · '+dt(manV[0].at)):'还没有手动存档')+'</span></div>';
+  h+=manV.length?manV.map(v=>vrow(v,false)).join('')
     :'<div class="hint">还没有存过版本。写完一章点一次「存一版」，出问题能退回来。</div>';
+  h+='<div class="mini" style="margin:16px 0 6px">自动存档 · 每 10 分钟一份，最多 5 份，按时间命名，不占版本号</div>';
+  h+=autV.length?autV.slice(0,5).map(v=>vrow(v,true)).join('')
+    :'<div class="hint">还没有自动存档。</div>';
   h+='<hr class="sep"><div style="display:flex;gap:8px;flex-wrap:wrap">'
     +'<button class="btn" data-act="wipe" style="color:#a34a3f">清空全部</button></div>';
   h+='<div class="mini" style="margin-top:16px;line-height:1.9">'
@@ -2836,12 +2862,12 @@ const ACT={
   },
   saveVer(){
     const label=prompt('给这一版起个名字（可以留空）','')||'';
-    const v=makeVersion(String(label||'').trim());
-    if(v) toast('已存为 v'+v);
+    const rec=makeVersion(String(label||'').trim(),'manual');
+    if(rec) toast('已存为 v'+rec.n);
     render();
   },
-  restoreVer(el){ restoreVersion(+el.dataset.n); },
-  diffVer(el){ showDiff(+el.dataset.n); },
+  restoreVer(el){ restoreVersion(el.dataset.id); },
+  diffVer(el){ showDiff(el.dataset.id); },
   mapNode(el){
     const id=el.dataset.id;
     if(Date.now()-mapDragEndAt<260) return;
@@ -2976,10 +3002,12 @@ const ACT={
   },
   mapSelLink(el){ DB.ui.selLink=el.dataset.id; render(); },
   delVer(el){
-    const n=+el.dataset.n;
-    if(!confirm('删除 v'+n+'？删了就找不回来了。')) return;
-    saveVersions(versions().filter(x=>x.n!==n));
-    render(); toast('已删除 v'+n);
+    const id=el.dataset.id;
+    const v=versions().find(x=>vId(x)===id);
+    if(!v) return;
+    if(!confirm('删除 '+vName(v)+'？删了就找不回来了。')) return;
+    saveVersions(versions().filter(x=>vId(x)!==id));
+    render(); toast('已删除 '+vName(v));
   },
   delEntry(){
     const e=curEntry(); if(!e) return;
@@ -3616,7 +3644,7 @@ let lastSnap=Date.now();
 setInterval(()=>{
   try{
     if(!DB) return;
-    if(Date.now()-lastSnap>=10*60*1000 && lastSave>lastSnap){ snapshot('自动'); lastSnap=Date.now(); }
+    if(Date.now()-lastSnap>=10*60*1000 && lastSave>lastSnap){ makeVersion('','auto'); lastSnap=Date.now(); }
   }catch(e){}
 },60*1000);
 
