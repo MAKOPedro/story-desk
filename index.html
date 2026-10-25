@@ -289,6 +289,8 @@ label.f>span{display:block;font-size:11.5px;color:var(--dim);margin-bottom:4px;l
 .pframe .pf-handle{position:absolute;right:-5px;bottom:-5px;width:12px;height:12px;border-radius:3px;background:var(--panel);border:1px solid var(--line2);cursor:nwse-resize}
 .pstick{position:absolute;cursor:move;user-select:none;line-height:1}
 .pstick img{display:block;border-radius:6px}
+.ps-handle{position:absolute;right:-6px;bottom:-6px;width:12px;height:12px;border-radius:3px;background:var(--panel);border:1px solid var(--line2);cursor:nwse-resize;display:none}
+.pstick:hover .ps-handle{display:block}
 .planrail button:hover{background:var(--hover);color:var(--ink)}
 .planrail button.on{background:var(--accent);border-color:var(--accent);color:#fff8ef}
 .planrail .sep{width:22px;height:1px;background:var(--line);margin:3px 0}
@@ -1507,9 +1509,11 @@ function viewPlan(){
       const a=assetById(st.asset);
       if(!a) return;
       h+='<div class="pstick" data-id="'+st.id+'" style="left:'+(st.x||0)+'px;top:'+(st.y||0)+'px">'
-        +'<img src="'+a.dataUrl+'" style="width:'+(st.w||200)+'px;border-radius:6px" draggable="false"></div>';
+        +'<img src="'+a.dataUrl+'" style="width:'+(st.w||200)+'px;border-radius:6px" draggable="false">'
+        +'<span class="ps-handle" data-id="'+st.id+'"></span></div>';
     }else{
-      h+='<div class="pstick emoji" data-id="'+st.id+'" style="left:'+(st.x||0)+'px;top:'+(st.y||0)+'px;font-size:'+(st.size||34)+'px">'+esc(st.value||'🙂')+'</div>';
+      h+='<div class="pstick emoji" data-id="'+st.id+'" style="left:'+(st.x||0)+'px;top:'+(st.y||0)+'px;font-size:'+(st.size||34)+'px">'+esc(st.value||'🙂')
+        +'<span class="ps-handle" data-id="'+st.id+'"></span></div>';
     }
   });
   p.nodes.forEach(n=>{
@@ -1620,6 +1624,12 @@ document.addEventListener('mousedown',function(e){
     PLANDND={type:'card',id:n.id,sx:e.clientX,sy:e.clientY,ox:n.x||0,oy:n.y||0,moved:false,z:z};
     e.preventDefault(); return;
   }
+  const sh=e.target.closest('.ps-handle');
+  if(sh){
+    const st0=planSticker(sh.dataset.id); if(!st0) return;
+    PLANDND={type:'sresize',id:st0.id,sx:e.clientX,sy:e.clientY,ow:st0.w||200,os:st0.size||34,moved:false,z:z};
+    e.preventDefault(); return;
+  }
   const stick=e.target.closest('.pstick');
   if(stick){
     const st=planSticker(stick.dataset.id); if(!st) return;
@@ -1643,6 +1653,16 @@ document.addEventListener('mousemove',function(e){
   else if(d.type==='stick'){
     const st=planSticker(d.id); if(st){ st.x=Math.max(0,Math.round(d.ox+dx)); st.y=Math.max(0,Math.round(d.oy+dy));
       const el=document.querySelector('.pstick[data-id="'+d.id+'"]'); if(el){ el.style.left=st.x+'px'; el.style.top=st.y+'px'; } }
+  }
+  else if(d.type==='sresize'){
+    const st=planSticker(d.id); if(!st) return;
+    if(st.kind==='img'){
+      st.w=Math.max(60,Math.round(d.ow+dx));
+      const im=document.querySelector('.pstick[data-id="'+d.id+'"] img'); if(im) im.style.width=st.w+'px';
+    }else{
+      st.size=Math.max(14,Math.round(d.os+dx*0.4));
+      const el=document.querySelector('.pstick[data-id="'+d.id+'"]'); if(el) el.style.fontSize=st.size+'px';
+    }
   }
   else if(d.type==='frame'){
     const fr=planFrame(d.id); if(fr){ fr.x=Math.max(0,Math.round(d.ox+dx)); fr.y=Math.max(0,Math.round(d.oy+dy));
@@ -3402,14 +3422,14 @@ const ACT={
     ensurePlan().updatedAt=now(); touch(); render(); toast('已删除这条连线');
   },
   async planDelFrame(el){
-    const id=(el&&el.dataset&&el.dataset.id)||'';
+    const id=(el&&el.dataset&&(el.dataset.id||el.dataset.v))||'';
     const fr=planFrame(id); if(!fr) return;
     if(!await uiConfirm('删除方框「'+(fr.label||'区域')+'」？框里的卡片会留下。','删除方框')) return;
     DB.plan.frames=ensurePlan().frames.filter(f=>f.id!==id);
     ensurePlan().updatedAt=now(); touch(); render();
   },
   planDelStick(el){
-    const id=(el&&el.dataset&&el.dataset.id)||'';
+    const id=(el&&el.dataset&&(el.dataset.id||el.dataset.v))||'';
     DB.plan.stickers=ensurePlan().stickers.filter(s=>s.id!==id);
     ensurePlan().updatedAt=now(); touch(); render();
   },
@@ -3447,7 +3467,7 @@ const ACT={
     });
   },
   async planDel(el){
-    const id=(el&&el.dataset&&el.dataset.id)||DB.ui.planSel;
+    const id=(el&&el.dataset&&(el.dataset.id||el.dataset.v))||DB.ui.planSel;
     if(!id) return;
     const n=planBy(id); if(!n) return;
     if(!await uiConfirm('删除「'+(n.title||'')+'」？它下面的分支会上移一级。','删除卡片')) return;
@@ -3983,7 +4003,7 @@ function openCtx(x,y,items,sel){
   m.innerHTML=items.map(it=>{
     if(it.sep) return '<div class="sep"></div>';
     if(it.head!=null) return '<div class="mini">'+esc(it.head)+'</div>';
-    return '<button data-act="'+it.act+'"><span class="ic">'+(it.icon||'')+'</span>'+esc(it.label)+'</button>';
+    return '<button data-act="'+it.act+'"'+(it.v!=null?(' data-v="'+esc(it.v)+'"'):'')+'><span class="ic">'+(it.icon||'')+'</span>'+esc(it.label)+'</button>';
   }).join('');
   m.style.display='block';
   const r=m.getBoundingClientRect();
