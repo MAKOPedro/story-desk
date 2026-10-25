@@ -783,14 +783,14 @@ function checks(){
   return out;
 }
 
-const TABS=[['write','写作'],['outline','大纲'],['plan','规划'],['chars','人物'],['map','地图'],['items','物品'],['dlg','对话'],['quest','任务'],['lib','设定'],['setup','设置']];
+const TABS=[['write','写作'],['outline','大纲'],['plan','规划'],['chars','人物'],['map','地图'],['items','物品'],['dlg','对话'],['quest','任务'],['refs','素材'],['lib','设定'],['setup','设置']];
 
 function render(){
   document.documentElement.dataset.theme=DB.ui.theme||'paper';
   const tb=$('.themebtn'); if(tb) tb.textContent=(DB.ui.theme==='night')?'纸':'夜';
   $('#ptitle').textContent=DB.meta.title||'未命名';
   $('#nav').innerHTML=TABS.map(t=>'<button data-act="tab" data-tab="'+t[0]+'" class="'+(DB.ui.tab===t[0]?'on':'')+'">'+t[1]+'</button>').join('');
-  const m={write:viewWrite,outline:viewOutline,plan:viewPlan,chars:viewChars,map:viewMap,items:viewItems,dlg:viewDlg,quest:viewQuest,lib:viewLib,setup:viewSetup}[DB.ui.tab]||viewWrite;
+  const m={write:viewWrite,outline:viewOutline,plan:viewPlan,chars:viewChars,map:viewMap,items:viewItems,dlg:viewDlg,quest:viewQuest,lib:viewLib,refs:viewRefs,setup:viewSetup}[DB.ui.tab]||viewWrite;
   const oldWrap=$('#view .mapwrap');
   const keepX=oldWrap?oldWrap.scrollLeft:0, keepY=oldWrap?oldWrap.scrollTop:0;
   const oldOut=document.querySelector('#view .out');
@@ -1821,6 +1821,133 @@ document.addEventListener('wheel',function(e){
   DB.ui.planZoom=Math.round(z*100)/100;
   render();
 },{passive:false});
+/* ---------- 素材库（文字型） ---------- */
+const REF_KINDS=['文献','链接','摘录','笔记'];
+function ensureRefs(){ if(!Array.isArray(DB.refs)) DB.refs=[]; return DB.refs; }
+function refBy(id){ return (DB.refs||[]).find(r=>r.id===id)||null; }
+function blankRef(kind){
+  return {id:'r_'+Date.now().toString(36)+Math.random().toString(36).slice(2,6),
+    title:'', kind:kind||'文献', source:'', url:'', body:'', tags:[], entryIds:[],
+    createdAt:now(), updatedAt:now()};
+}
+function refTags(){
+  const m={};
+  (DB.refs||[]).forEach(r=>(r.tags||[]).forEach(t=>{ if(t) m[t]=(m[t]||0)+1; }));
+  return Object.keys(m).sort((a,b)=>m[b]-m[a]).map(t=>({t:t,n:m[t]}));
+}
+function refCite(r){
+  if(!r) return '';
+  const title=r.title||'未命名';
+  if(r.kind==='链接') return '['+title+']('+(r.url||'')+')';
+  if(r.kind==='文献') return '《'+title+'》'+(r.source?('，'+r.source):'');
+  const src=r.source?('——'+r.source):'';
+  return (r.body||title)+(src?('\n'+src):'');
+}
+function refsMarkdown(){
+  const L=['# 参考资料',''];
+  REF_KINDS.forEach(k=>{
+    const list=(DB.refs||[]).filter(r=>r.kind===k);
+    if(!list.length) return;
+    L.push('## '+k,'');
+    list.forEach((r,i)=>{
+      let line=(i+1)+'. '+(r.title||'未命名');
+      if(r.source) line+='　'+r.source;
+      if(r.url) line+='　'+r.url;
+      L.push(line);
+      if(r.body){
+        const b=String(r.body).split('\n').map(x=>'> '+x).join('\n');
+        L.push('',b,'');
+      }
+      if((r.tags||[]).length) L.push('标签：'+r.tags.join('、'));
+      L.push('');
+    });
+  });
+  return L.join('\n');
+}
+function viewRefs(){
+  ensureRefs();
+  const kind=DB.ui.refKind||'';
+  const tag=DB.ui.refTag||'';
+  const q=String(DB.ui.refQ||'').toLowerCase();
+  const all=DB.refs;
+  const list=all.filter(r=>{
+    if(kind&&r.kind!==kind) return false;
+    if(tag&&(r.tags||[]).indexOf(tag)<0) return false;
+    if(q){
+      const hay=[r.title,r.source,r.body,r.url].concat(r.tags||[]).join(' ').toLowerCase();
+      if(hay.indexOf(q)<0) return false;
+    }
+    return true;
+  });
+  const cur=refBy(DB.ui.refId);
+  let h='<div class="boardpage"><div class="mtoolbar">'
+    +'<b style="font-family:var(--serif);letter-spacing:.1em">素材</b>'
+    +'<button class="btn sm primary" data-act="refAdd">＋ 素材</button>'
+    +'<input type="search" data-bind="ui.refQ" value="'+esc(DB.ui.refQ||'')+'" placeholder="搜标题 / 来源 / 正文 / 标签" style="width:260px">'
+    +'<div style="flex:1"></div>'
+    +'<span class="mini">'+all.length+' 条</span>'
+    +'<button class="btn sm" data-act="refExport">导出参考文献</button>'
+    +'</div>'
+    +'<div class="lib" style="grid-template-columns:220px 300px minmax(0,1fr)">';
+  h+='<aside class="rail">';
+  h+='<div class="mini" style="padding:6px 10px 4px">类型</div>';
+  h+='<div class="rit'+(kind===''?' on':'')+'" data-act="refKind" data-v="">全部 '+all.length+'</div>';
+  REF_KINDS.forEach(k=>{
+    const n=all.filter(r=>r.kind===k).length;
+    h+='<div class="rit'+(kind===k?' on':'')+'" data-act="refKind" data-v="'+k+'">'+k+' '+n+'</div>';
+  });
+  const tg=refTags();
+  if(tg.length){
+    h+='<div class="mini" style="padding:10px 10px 4px">标签</div>';
+    h+='<div style="display:flex;flex-wrap:wrap;gap:4px;padding:0 10px 10px">';
+    tg.forEach(x=>{
+      h+='<button class="btn sm '+(tag===x.t?'primary':'ghost')+'" data-act="refTag" data-v="'+esc(x.t)+'">'+esc(x.t)+' '+x.n+'</button>';
+    });
+    h+='</div>';
+  }
+  h+='</aside>';
+  h+='<aside class="rail" style="border-right:1px solid var(--line)">';
+  if(!list.length) h+='<div class="mini" style="padding:12px">没有匹配的素材</div>';
+  list.forEach(r=>{
+    h+='<div class="rit'+(DB.ui.refId===r.id?' on':'')+'" data-act="refSel" data-id="'+r.id+'" style="flex-direction:column;align-items:flex-start;gap:2px">'
+      +'<span style="font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%">'+esc(r.title||'未命名')+'</span>'
+      +'<span class="mini">'+esc(r.kind)+(r.source?(' · '+esc(r.source)):'')+'</span>'
+      +'</div>';
+  });
+  h+='</aside>';
+  h+='<div class="libmain" style="padding:18px 22px">';
+  if(!cur){
+    h+='<div class="empty">左边选一条素材，或者点「＋ 素材」新建<br>'
+      +'<span class="mini">文献、网页链接、原文摘录、自己的笔记都能放这儿</span></div>';
+  }else{
+    h+='<div style="display:grid;grid-template-columns:2fr 1fr;gap:12px">'
+      +'<label class="f"><span>标题</span><input type="text" data-ref-field="title" value="'+esc(cur.title||'')+'" placeholder="书名 / 网页标题 / 摘录主题"></label>'
+      +'<label class="f"><span>类型</span><select data-ref-field="kind">'+REF_KINDS.map(k=>'<option'+(cur.kind===k?' selected':'')+'>'+k+'</option>').join('')+'</select></label>'
+      +'</div>'
+      +'<div style="display:grid;grid-template-columns:2fr 1fr;gap:12px">'
+      +'<label class="f"><span>来源（作者 / 网站 / 书名页码）</span><input type="text" data-ref-field="source" value="'+esc(cur.source||'')+'" placeholder="作者、期刊、网站名"></label>'
+      +'<label class="f"><span>链接</span><input type="text" data-ref-field="url" value="'+esc(cur.url||'')+'" placeholder="https://"></label>'
+      +'</div>'
+      +'<label class="f"><span>正文 / 摘录</span><textarea data-ref-field="body" rows="12" placeholder="原文摘录、要点整理、或者你自己的笔记">'+esc(cur.body||'')+'</textarea></label>'
+      +'<label class="f"><span>标签（逗号分隔）</span><input type="text" data-ref-field="tags" value="'+esc((cur.tags||[]).join(',')) +'" placeholder="民俗,都市传说"></label>'
+      +'<div class="f"><span>关联词条</span><div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px">';
+    (cur.entryIds||[]).forEach(id=>{
+      const e=entryBy(id);
+      h+='<button class="btn sm" data-act="refUnlink" data-id="'+id+'" title="点一下取消关联">'+(e?esc(e.title):'（已删除）')+' ✕</button>';
+    });
+    h+='<button class="btn sm ghost" data-act="refLinkEntry">＋ 关联</button></div></div>';
+    h+='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px">'
+      +'<button class="btn" data-act="refCopy">复制引用</button>'
+      +(cur.url?('<button class="btn" data-act="refOpen">打开链接</button>'):'')
+      +'<div style="flex:1"></div>'
+      +'<button class="btn" data-act="refDel" style="color:#a34a3f">删除</button>'
+      +'</div>';
+    h+='<div class="mini" style="margin-top:14px">创建 '+dt(cur.createdAt)+' · 最近修改 '+dt(cur.updatedAt)+'</div>';
+  }
+  h+='</div></div></div>';
+  return h;
+}
+
 /* ---------- 物品（接本地编辑器） ---------- */
 const ITEM_SRV='http://127.0.0.1:5128';
 let ITEMDOC=null, ITEMOPTS=null, ITEMDIRTY=false;
@@ -2288,7 +2415,7 @@ async function ghPush(force){
   const metaObj={
     v:2,updatedAt:now(),dir:cfg.dir,
     meta:DB.meta,entries:DB.entries,rels:DB.rels||[],events:DB.events||[],threads:DB.threads||[],
-    dialogues:DB.dialogues||[],quests:DB.quests||[],map:DB.map||{},assets:DB.assets||[],plan:DB.plan||{},
+    dialogues:DB.dialogues||[],quests:DB.quests||[],map:DB.map||{},assets:DB.assets||[],plan:DB.plan||{},refs:DB.refs||[],
     nodes:DB.nodes.filter(n=>n.type!=='chapter'),
     chapters:cs.map(c=>({id:c.id,title:c.title,order:c.order,updatedAt:c.updatedAt||0}))
   };
@@ -2363,6 +2490,7 @@ async function ghPull(){
   DB.quests=unionById(DB.quests||[],metaObj.quests||[]);
   DB.assets=unionById(DB.assets||[],metaObj.assets||[]);
   if(metaObj.plan&&(metaObj.plan.updatedAt||0)>(ensurePlan().updatedAt||0)) DB.plan=metaObj.plan;
+  DB.refs=unionById(DB.refs||[],metaObj.refs||[]);
   if(metaObj.map&&(metaObj.map.updatedAt||0)>(ensureMap().updatedAt||0)) DB.map=metaObj.map;
   if(metaObj.meta&&(metaObj.updatedAt||0)>((DB.meta&&DB.meta.updatedAt)||0)){
     DB.meta=Object.assign({},DB.meta,metaObj.meta);
@@ -3413,7 +3541,59 @@ const ACT={
   },
   charView(el){ DB.ui.charBoard=(el.dataset.v==='board'); DB.ui.linkMode=false; DB.ui.linkA=null; if(!DB.ui.charBoard) DB.ui.charId=null; render(); },
   libView(el){ DB.ui.libBoard=(el.dataset.v==='board'); DB.ui.linkMode=false; DB.ui.linkA=null; render(); },
-  planAdd(){
+  refAdd(){
+    ensureRefs();
+    const r=blankRef(DB.ui.refKind||'文献');
+    DB.refs.unshift(r);
+    DB.ui.refId=r.id; DB.ui.tab='refs';
+    touch(); render();
+    setTimeout(()=>{ const el=document.querySelector('[data-ref-field="title"]'); if(el) el.focus(); },60);
+  },
+  refSel(el){ DB.ui.refId=el.dataset.id; render(); },
+  refKind(el){ DB.ui.refKind=el.dataset.v||''; render(); },
+  refTag(el){ const tg=el.dataset.v||''; DB.ui.refTag=(DB.ui.refTag===tg?'':tg); render(); },
+  refUnlink(el){
+    const r=refBy(DB.ui.refId); if(!r) return;
+    r.entryIds=(r.entryIds||[]).filter(x=>x!==el.dataset.id);
+    r.updatedAt=now(); touch(); render();
+  },
+  refLinkEntry(){
+    const r=refBy(DB.ui.refId); if(!r) return;
+    const list=DB.entries.slice().sort((a,b)=>String(a.title||'').localeCompare(String(b.title||''),'zh'));
+    if(!list.length) return toast('还没有词条，先去「设定」建一个');
+    modal('关联到哪个词条',
+      '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:6px;max-height:52vh;overflow:auto">'
+      +list.map(e=>'<button class="btn" style="justify-content:flex-start;text-align:left" data-act="refPickEntry" data-v="'+e.id+'">'
+        +ET[e.type].icon+' '+esc(e.title)+'</button>').join('')
+      +'</div>','<button class="btn" data-act="closeModal">取消</button>',true);
+  },
+  refPickEntry(el){
+    const r=refBy(DB.ui.refId); if(!r) return;
+    r.entryIds=r.entryIds||[];
+    if(r.entryIds.indexOf(el.dataset.v)<0) r.entryIds.push(el.dataset.v);
+    r.updatedAt=now(); closeModal(); touch(); render();
+  },
+  refCopy(){
+    const r=refBy(DB.ui.refId); if(!r) return;
+    const txt=refCite(r);
+    if(navigator.clipboard&&navigator.clipboard.writeText){
+      navigator.clipboard.writeText(txt).then(()=>toast('已复制引用')).catch(()=>warn('复制失败，请手动选中'));
+    }else warn('这个浏览器不支持复制');
+  },
+  refOpen(){
+    const r=refBy(DB.ui.refId); if(!r||!r.url) return;
+    window.open(r.url,'_blank','noopener');
+  },
+  async refDel(){
+    const r=refBy(DB.ui.refId); if(!r) return;
+    if(!await uiConfirm('删除「'+(r.title||'未命名')+'」？','删除素材')) return;
+    DB.refs=DB.refs.filter(x=>x.id!==r.id);
+    DB.ui.refId=null; touch(); render();
+  },
+  refExport(){
+    if(!(DB.refs||[]).length) return toast('素材库是空的');
+    download('参考资料-'+today()+'.md', refsMarkdown(), 'text/markdown');
+  },  planAdd(){
     const n={id:planNewId(),parentId:null,title:'新主题',note:'',x:80,y:80};
     ensurePlan().nodes.push(n); ensurePlan().updatedAt=now();
     DB.ui.planSel=n.id; planLayoutAll(); touch(); render();
@@ -4162,6 +4342,13 @@ document.addEventListener('input',e=>{
   if(tg.id==='refQ'){ REFQ=tg.value; paintRef(); return; }
   if(tg.id==='frQ'){ frPaint(); return; }
   if(tg.id==='pq'){ palIdx=0; renderPalette(tg.value); return; }
+  const rf=tg.dataset&&tg.dataset.refField;
+  if(rf){
+    const r=refBy(DB.ui.refId); if(!r) return;
+    if(rf==='tags') r.tags=String(tg.value||'').split(/[,，\s]+/).filter(Boolean);
+    else r[rf]=tg.value;
+    r.updatedAt=now(); touch(); return;
+  }
   const f=tg.dataset&&tg.dataset.itemField;
   if(f){
     const it=curItem(); if(!it) return;
@@ -4182,6 +4369,8 @@ document.addEventListener('input',e=>{
   applyBind(el);
 });
 document.addEventListener('change',e=>{
+  const rt=e.target&&e.target.dataset&&e.target.dataset.refField;
+  if(rt){ render(); return; }
   const el=e.target;
   if(el.id==='ghToken'){ setToken(String(el.value||'').trim()); toast(el.value?'Token 已保存':'Token 已清除'); return; }
   if(el.dataset&&el.dataset.evch){
@@ -4330,10 +4519,11 @@ function fixNode(n){
 }
 function init(){
   DB=load();
-  DB.ui=Object.assign({tab:'write',nodeId:null,entryId:null,charId:null,theme:'paper',filter:'',q:'',preview:false,zen:false,sub:'outline',collapsed:[],itemSrv:'',richEdit:true,planSel:null,planZoom:1,planBig:false,planLink:false,planLinkA:null,planRect:false,planShape:'rect'},DB.ui||{});
+  DB.ui=Object.assign({tab:'write',nodeId:null,entryId:null,charId:null,theme:'paper',filter:'',q:'',preview:false,zen:false,sub:'outline',collapsed:[],itemSrv:'',richEdit:true,planSel:null,planZoom:1,planBig:false,planLink:false,planLinkA:null,planRect:false,planShape:'rect',refId:null,refKind:'',refTag:'',refQ:''},DB.ui||{});
   if(!DB.plan||typeof DB.plan!=='object'||!Array.isArray(DB.plan.nodes)) DB.plan={nodes:[],updatedAt:0};
   if(!Array.isArray(DB.ui.collapsed)) DB.ui.collapsed=[];
   if(!Array.isArray(DB.assets)) DB.assets=[];
+  if(!Array.isArray(DB.refs)) DB.refs=[];
   if(!DB.meta) DB.meta={title:'未命名',logline:'',genre:'',form:'novel',targetWords:60000};
   if(!Array.isArray(DB.rels)) DB.rels=[];
   if(!Array.isArray(DB.events)) DB.events=[];
