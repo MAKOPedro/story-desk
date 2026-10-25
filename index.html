@@ -277,6 +277,43 @@ label.f>span{display:block;font-size:11.5px;color:var(--dim);margin-bottom:4px;l
 .planlinks path.hi{stroke:var(--accent)}
 .planlinks path.free{stroke:var(--accent);stroke-dasharray:7 5;pointer-events:stroke;cursor:pointer}
 .planlinks path.free:hover{stroke-width:3}
+/* ---------- 素材库 ---------- */
+.refpage{display:grid;grid-template-columns:206px 318px minmax(0,1fr);flex:1;min-height:0}
+.refcol{overflow-y:auto;background:var(--panel);border-right:1px solid var(--line)}
+.refcol.mid{background:var(--paper)}
+.rfh{padding:14px 16px 6px;font-size:10.5px;letter-spacing:.16em;color:var(--dim2)}
+.rfkind{display:flex;align-items:center;justify-content:space-between;margin:2px 8px;padding:7px 10px;
+  border-radius:7px;cursor:pointer;font-size:12.5px;color:var(--ink)}
+.rfkind:hover{background:var(--hover)}
+.rfkind.on{background:var(--sel);color:var(--accent);font-weight:500}
+.rfkind .n{font-size:11px;color:var(--dim2);font-variant-numeric:tabular-nums}
+.rftags{display:flex;flex-wrap:wrap;gap:5px;padding:4px 10px 16px}
+.rftag{border:1px solid var(--line2);background:var(--panel);border-radius:14px;padding:2px 9px;font-size:11.5px;
+  color:var(--dim);cursor:pointer;line-height:1.7}
+.rftag:hover{border-color:var(--accent);color:var(--accent)}
+.rftag.on{background:var(--accent);border-color:var(--accent);color:#fff8ef}
+.rfitem{margin:0 10px 8px;padding:9px 11px;border-radius:9px;border:1px solid var(--line);background:var(--panel);
+  cursor:pointer;border-left:3px solid var(--line2)}
+.rfitem:first-child{margin-top:8px}
+.rfitem:hover{box-shadow:0 2px 12px #3a2a1214}
+.rfitem.on{border-left-color:var(--accent);background:var(--sel)}
+.rfitem .t{font-family:var(--serif);font-size:13.5px;line-height:1.45;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rfitem .m{margin-top:5px;display:flex;align-items:center;gap:6px;font-size:11px;color:var(--dim2);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rfitem .snippet{margin-top:4px;font-size:11.5px;color:var(--dim2);opacity:.85;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rfbadge{display:inline-block;flex:none;padding:0 6px;border-radius:4px;font-size:10.5px;line-height:1.7;border:1px solid currentColor}
+.rfdetail{padding:22px 26px 44px;overflow-y:auto}
+.rfhead{display:flex;align-items:center;gap:10px;margin-bottom:18px}
+.rfhead .rftitle{flex:1;width:auto;border:0;border-bottom:1px solid var(--line2);border-radius:0;background:transparent;
+  font-family:var(--serif);font-size:18px;padding:5px 2px}
+.rfhead .rftitle:focus{border-bottom-color:var(--accent);box-shadow:none}
+.rfmeta{display:grid;grid-template-columns:1fr 1fr;gap:10px 16px}
+.rfbody{font-family:var(--serif);font-size:15px;line-height:1.95;border:1px solid var(--line2);border-radius:10px;
+  background:var(--panel);padding:14px 16px;min-height:200px;width:100%;resize:vertical}
+.rffoot{margin-top:18px;padding-top:12px;border-top:1px solid var(--line);font-size:11px;color:var(--dim2)}
+.rfchip{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--line2);background:var(--panel);
+  border-radius:14px;padding:2px 10px;font-size:11.5px;color:var(--ink);cursor:pointer}
+.rfchip:hover{border-color:#a34a3f;color:#a34a3f}
 .planboard{display:flex;flex:1;min-height:0}
 .planrail{width:78px;flex:none;background:var(--panel);border-right:1px solid var(--line);
   display:flex;flex-direction:column;align-items:center;gap:4px;padding:10px 0;overflow-y:auto}
@@ -1864,6 +1901,9 @@ function refsMarkdown(){
   });
   return L.join('\n');
 }
+const REF_COLOR={'文献':'#96583a','链接':'#3c5a8a','摘录':'#3f6b52','笔记':'#8a5a9c'};
+function refColor(k){ return REF_COLOR[k]||'#7d7466'; }
+function refBadge(k){ return '<span class="rfbadge" style="color:'+refColor(k)+'">'+esc(k)+'</span>'; }
 function viewRefs(){
   ensureRefs();
   const kind=DB.ui.refKind||'';
@@ -1883,72 +1923,72 @@ function viewRefs(){
   let h='<div class="boardpage"><div class="mtoolbar">'
     +'<b style="font-family:var(--serif);letter-spacing:.1em">素材</b>'
     +'<button class="btn sm primary" data-act="refAdd">＋ 素材</button>'
-    +'<input type="search" data-bind="ui.refQ" value="'+esc(DB.ui.refQ||'')+'" placeholder="搜标题 / 来源 / 正文 / 标签" style="width:260px">'
+    +'<input type="search" data-bind="ui.refQ" value="'+esc(DB.ui.refQ||'')+'" placeholder="搜标题 / 来源 / 正文 / 标签" style="width:280px">'
     +'<div style="flex:1"></div>'
     +'<span class="mini">'+all.length+' 条</span>'
     +'<button class="btn sm" data-act="refExport">导出参考文献</button>'
     +'</div>'
-    +'<div class="lib" style="grid-template-columns:220px 300px minmax(0,1fr)">';
-  h+='<aside class="rail">';
-  h+='<div class="mini" style="padding:6px 10px 4px">类型</div>';
-  h+='<div class="rit'+(kind===''?' on':'')+'" data-act="refKind" data-v="">全部 '+all.length+'</div>';
+    +'<div class="refpage">';
+  h+='<div class="refcol">';
+  h+='<div class="rfh">类型</div>';
+  h+='<div class="rfkind'+(kind===''?' on':'')+'" data-act="refKind" data-v=""><span>全部</span><span class="n">'+all.length+'</span></div>';
   REF_KINDS.forEach(k=>{
     const n=all.filter(r=>r.kind===k).length;
-    h+='<div class="rit'+(kind===k?' on':'')+'" data-act="refKind" data-v="'+k+'">'+k+' '+n+'</div>';
+    h+='<div class="rfkind'+(kind===k?' on':'')+'" data-act="refKind" data-v="'+k+'"><span>'+k+'</span><span class="n">'+n+'</span></div>';
   });
   const tg=refTags();
   if(tg.length){
-    h+='<div class="mini" style="padding:10px 10px 4px">标签</div>';
-    h+='<div style="display:flex;flex-wrap:wrap;gap:4px;padding:0 10px 10px">';
+    h+='<div class="rfh">标签</div><div class="rftags">';
     tg.forEach(x=>{
-      h+='<button class="btn sm '+(tag===x.t?'primary':'ghost')+'" data-act="refTag" data-v="'+esc(x.t)+'">'+esc(x.t)+' '+x.n+'</button>';
+      h+='<span class="rftag'+(tag===x.t?' on':'')+'" data-act="refTag" data-v="'+esc(x.t)+'">'+esc(x.t)+' '+x.n+'</span>';
     });
     h+='</div>';
   }
-  h+='</aside>';
-  h+='<aside class="rail" style="border-right:1px solid var(--line)">';
-  if(!list.length) h+='<div class="mini" style="padding:12px">没有匹配的素材</div>';
+  h+='</div>';
+  h+='<div class="refcol mid">';
+  if(!list.length) h+='<div class="mini" style="padding:16px">没有匹配的素材</div>';
   list.forEach(r=>{
-    h+='<div class="rit'+(DB.ui.refId===r.id?' on':'')+'" data-act="refSel" data-id="'+r.id+'" style="flex-direction:column;align-items:flex-start;gap:2px">'
-      +'<span style="font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%">'+esc(r.title||'未命名')+'</span>'
-      +'<span class="mini">'+esc(r.kind)+(r.source?(' · '+esc(r.source)):'')+'</span>'
+    const snip=String(r.body||'').replace(/\s+/g,' ').slice(0,42);
+    h+='<div class="rfitem'+(DB.ui.refId===r.id?' on':'')+'" data-act="refSel" data-id="'+r.id+'" style="border-left-color:'+(DB.ui.refId===r.id?refColor(r.kind):'var(--line2)')+'">'
+      +'<div class="t">'+esc(r.title||'未命名')+'</div>'
+      +'<div class="m">'+refBadge(r.kind)+(r.source?'<span>'+esc(r.source)+'</span>':'')+'</div>'
+      +(snip?'<div class="snippet">'+esc(snip)+'</div>':'')
       +'</div>';
   });
-  h+='</aside>';
-  h+='<div class="libmain" style="padding:18px 22px">';
+  h+='</div>';
+  h+='<div class="rfdetail">';
   if(!cur){
-    h+='<div class="empty">左边选一条素材，或者点「＋ 素材」新建<br>'
+    h+='<div class="empty">右边选一条素材，或者点「＋ 素材」新建<br>'
       +'<span class="mini">文献、网页链接、原文摘录、自己的笔记都能放这儿</span></div>';
   }else{
-    h+='<div style="display:grid;grid-template-columns:2fr 1fr;gap:12px">'
-      +'<label class="f"><span>标题</span><input type="text" data-ref-field="title" value="'+esc(cur.title||'')+'" placeholder="书名 / 网页标题 / 摘录主题"></label>'
-      +'<label class="f"><span>类型</span><select data-ref-field="kind">'+REF_KINDS.map(k=>'<option'+(cur.kind===k?' selected':'')+'>'+k+'</option>').join('')+'</select></label>'
-      +'</div>'
-      +'<div style="display:grid;grid-template-columns:2fr 1fr;gap:12px">'
-      +'<label class="f"><span>来源（作者 / 网站 / 书名页码）</span><input type="text" data-ref-field="source" value="'+esc(cur.source||'')+'" placeholder="作者、期刊、网站名"></label>'
+    h+='<div class="rfhead">'
+      +refBadge(cur.kind)
+      +'<input class="rftitle" type="text" data-ref-field="title" value="'+esc(cur.title||'')+'" placeholder="书名 / 网页标题 / 摘录主题">'
+      +'<button class="btn sm" data-act="refCopy">复制引用</button>'
+      +(cur.url?('<button class="btn sm" data-act="refOpen">打开链接</button>'):'')
+      +'<button class="btn sm ghost" data-act="refDel" style="color:#a34a3f">删除</button>'
+      +'</div>';
+    h+='<div class="rfmeta">'
+      +'<label class="f"><span>来源（作者 / 网站 / 页码）</span><input type="text" data-ref-field="source" value="'+esc(cur.source||'')+'" placeholder="作者，年份，页码"></label>'
       +'<label class="f"><span>链接</span><input type="text" data-ref-field="url" value="'+esc(cur.url||'')+'" placeholder="https://"></label>'
-      +'</div>'
-      +'<label class="f"><span>正文 / 摘录</span><textarea data-ref-field="body" rows="12" placeholder="原文摘录、要点整理、或者你自己的笔记">'+esc(cur.body||'')+'</textarea></label>'
-      +'<label class="f"><span>标签（逗号分隔）</span><input type="text" data-ref-field="tags" value="'+esc((cur.tags||[]).join(',')) +'" placeholder="民俗,都市传说"></label>'
-      +'<div class="f"><span>关联词条</span><div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px">';
+      +'</div>';
+    h+='<label class="f" style="margin-top:14px"><span>正文 / 摘录</span>'
+      +'<textarea class="rfbody" data-ref-field="body" rows="10" placeholder="原文摘录、要点整理、或者你自己的笔记">'+esc(cur.body||'')+'</textarea></label>';
+    h+='<div class="rfmeta" style="margin-top:14px">'
+      +'<label class="f"><span>标签（逗号分隔）</span><input type="text" data-ref-field="tags" value="'+esc((cur.tags||[]).join(',')) +'" placeholder="民俗, 叙事"></label>'
+      +'<label class="f"><span>类型</span><select data-ref-field="kind">'+REF_KINDS.map(k=>'<option'+(cur.kind===k?' selected':'')+'>'+k+'</option>').join('')+'</select></label>'
+      +'</div>';
+    h+='<div class="f" style="margin-top:14px"><span>关联词条</span><div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">';
     (cur.entryIds||[]).forEach(id=>{
       const e=entryBy(id);
-      h+='<button class="btn sm" data-act="refUnlink" data-id="'+id+'" title="点一下取消关联">'+(e?esc(e.title):'（已删除）')+' ✕</button>';
+      h+='<span class="rfchip" data-act="refUnlink" data-id="'+id+'" title="点一下取消关联">'+(e?esc(e.title):'（已删除）')+' ✕</span>';
     });
-    h+='<button class="btn sm ghost" data-act="refLinkEntry">＋ 关联</button></div></div>';
-    h+='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px">'
-      +'<button class="btn" data-act="refCopy">复制引用</button>'
-      +(cur.url?('<button class="btn" data-act="refOpen">打开链接</button>'):'')
-      +'<div style="flex:1"></div>'
-      +'<button class="btn" data-act="refDel" style="color:#a34a3f">删除</button>'
-      +'</div>';
-    h+='<div class="mini" style="margin-top:14px">创建 '+dt(cur.createdAt)+' · 最近修改 '+dt(cur.updatedAt)+'</div>';
+    h+='<span class="rfchip" data-act="refLinkEntry" style="color:var(--dim2)">＋ 关联词条</span></div></div>';
+    h+='<div class="rffoot">创建 '+dt(cur.createdAt)+' · 最近修改 '+dt(cur.updatedAt)+'</div>';
   }
   h+='</div></div></div>';
   return h;
-}
-
-/* ---------- 物品（接本地编辑器） ---------- */
+}/* ---------- 物品（接本地编辑器） ---------- */
 const ITEM_SRV='http://127.0.0.1:5128';
 let ITEMDOC=null, ITEMOPTS=null, ITEMDIRTY=false;
 function itemSrv(){ return String((DB.ui&&DB.ui.itemSrv)||ITEM_SRV).replace(/\/+$/,''); }
