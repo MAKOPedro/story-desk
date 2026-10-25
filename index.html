@@ -210,6 +210,13 @@ label.f>span{display:block;font-size:11.5px;color:var(--dim);margin-bottom:4px;l
 .mbox .mh{padding:12px 16px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:8px}
 .mbox .mb{padding:14px 16px;overflow:auto}
 .mbox .mf{padding:10px 16px;border-top:1px solid var(--line);display:flex;gap:8px;justify-content:flex-end}
+.askwrap{position:fixed;inset:0;background:#2a211a66;display:flex;align-items:center;justify-content:center;z-index:10050}
+.askbox{background:var(--panel);border:1px solid var(--line2);border-radius:12px;box-shadow:0 24px 60px #3a2a1233;
+  width:min(430px,92vw);padding:20px 22px 18px}
+.askbox h5{margin:0 0 10px;font-family:var(--serif);font-size:15px;letter-spacing:.06em;font-weight:600}
+.askbox .msg{font-size:13px;line-height:1.85;white-space:pre-wrap;color:var(--ink)}
+.askbox input{margin-top:12px;width:100%}
+.askbox .btns{display:flex;gap:8px;justify-content:flex-end;margin-top:20px}
 #palette{position:fixed;inset:0;background:#2a201066;display:none;align-items:flex-start;justify-content:center;z-index:95;padding:14vh 20px 20px}
 #palette.on{display:flex}
 .pbox{background:var(--panel);border:1px solid var(--line2);border-radius:10px;width:min(600px,96vw);overflow:hidden;box-shadow:0 24px 60px #3a2a1230}
@@ -618,11 +625,11 @@ function showDiff(id){
     : '<div class="hint">正文和这一版完全一样，改的是设定、对话或任务。</div>';
   modal('对比 '+vName({kind:d.kind,n:d.n,at:d.at})+'（'+dt(d.at)+'）→ 现在', b, '<button class="btn" data-act="closeModal">关闭</button>');
 }
-function restoreVersion(id){
+async function restoreVersion(id){
   const v=versions().find(x=>vId(x)===id);
   if(!v) return;
   const nm=vName(v);
-  if(!confirm('回到 '+nm+'（'+dt(v.at)+'）？\n当前内容会先存成一个新版本。')) return;
+  if(!await uiConfirm('回到 '+nm+'（'+dt(v.at)+'）？\n当前内容会先存成一个新版本。')) return;
   makeVersion('恢复前');
   try{ DB=JSON.parse(v.data); }catch(e){ return warn('这个版本读不出来'); }
   DB.ui=Object.assign({tab:'write',nodeId:null,entryId:null,charId:null,dlgId:null,questId:null,charBoard:false,libBoard:false,itemSrv:'',itemSel:null,itemQ:'',theme:'paper',filter:'',q:'',preview:false,zen:false,sub:'outline'},DB.ui||{});
@@ -646,6 +653,49 @@ function modal(title,body,foot,wide){
   $('#modal').classList.add('on');
 }
 function closeModal(){ $('#modal').classList.remove('on'); $('#modal').innerHTML=''; }
+function uiAsk(opts){
+  return new Promise(resolve=>{
+    const wrap=document.createElement('div');
+    wrap.className='askwrap';
+    wrap.innerHTML='<div class="askbox">'
+      +'<h5>'+esc(opts.title||'确认')+'</h5>'
+      +(opts.message?'<div class="msg">'+esc(opts.message)+'</div>':'')
+      +(opts.prompt?'<input id="askInput" type="text" value="'+esc(opts.value||'')+'">':'')
+      +'<div class="btns">'
+      +'<button class="btn" data-ask="0">'+esc(opts.cancel||'取消')+'</button>'
+      +'<button class="btn primary" data-ask="1">'+esc(opts.ok||'确定')+'</button>'
+      +'</div></div>';
+    document.body.appendChild(wrap);
+    const input=wrap.querySelector('#askInput');
+    if(input) setTimeout(()=>{ input.focus(); try{ input.select(); }catch(e){} },30);
+    let done=false;
+    const finish=(val)=>{
+      if(done) return; done=true;
+      try{ wrap.remove(); }catch(e){}
+      document.removeEventListener('keydown',onKey,true);
+      resolve(val);
+    };
+    const onKey=(e)=>{
+      if(e.key==='Escape'){ e.preventDefault(); e.stopPropagation(); finish(opts.prompt?null:false); }
+      else if(e.key==='Enter'&&opts.prompt){ e.preventDefault(); e.stopPropagation(); finish(input?input.value:''); }
+    };
+    document.addEventListener('keydown',onKey,true);
+    wrap.addEventListener('click',e=>{
+      const b=e.target.closest('[data-ask]');
+      if(b){ finish(b.dataset.ask==='1'?(opts.prompt?(input?input.value:''):true):(opts.prompt?null:false)); return; }
+      if(e.target===wrap) finish(opts.prompt?null:false);
+    });
+  });
+}
+function uiConfirm(message,title){
+  return uiAsk({title:title||'确认',message:message,ok:'确定',cancel:'取消'});
+}
+function uiPrompt(message,value,title){
+  return uiAsk({title:title||'输入',message:message,prompt:true,value:value,ok:'确定',cancel:'取消'});
+}
+function uiAlert(message,title){
+  return uiAsk({title:title||'提示',message:message,ok:'知道了',cancel:'关闭'});
+}
 
 /* ---------- 检查 ---------- */
 function checks(){
@@ -693,9 +743,16 @@ function render(){
   const m={write:viewWrite,outline:viewOutline,chars:viewChars,map:viewMap,items:viewItems,dlg:viewDlg,quest:viewQuest,lib:viewLib,setup:viewSetup}[DB.ui.tab]||viewWrite;
   const oldWrap=$('#view .mapwrap');
   const keepX=oldWrap?oldWrap.scrollLeft:0, keepY=oldWrap?oldWrap.scrollTop:0;
+  const oldOut=document.querySelector('#view .out');
+  const keepOut=oldOut?oldOut.scrollTop:0;
+  let keepWin=0;
+  try{ keepWin=window.scrollY||document.documentElement.scrollTop||0; }catch(e){}
   try{ $('#view').innerHTML=m(); }
   catch(err){ $('#view').innerHTML='<div class="empty">视图出错：'+esc(err.message)+'</div>'; }
   if(DB.ui.tab==='map'){ const w=$('#view .mapwrap'); if(w){ w.scrollLeft=keepX; w.scrollTop=keepY; } }
+  const newOut=document.querySelector('#view .out');
+  if(newOut&&keepOut) newOut.scrollTop=keepOut;
+  try{ if(keepWin) window.scrollTo(0,keepWin); }catch(e){}
   renderDrawer();
   paintSaved();
   if(DB.ui.tab==='write'&&!DB.ui.preview) setTimeout(()=>{ const t=$('#eText'); if(t&&!t.isContentEditable) autoGrow(t); },0);
@@ -1300,7 +1357,7 @@ document.addEventListener('mouseup',function(){
   ensureMap().updatedAt=now();
   touch(); render();
 });
-document.addEventListener('dblclick',function(e){
+document.addEventListener('dblclick',async function(e){
   const cv=e.target.closest('#mapcanvas');
   if(!cv) return;
   const kind=cv.dataset.board||'places';
@@ -1309,7 +1366,7 @@ document.addEventListener('dblclick',function(e){
     const arr=kind==='places'?ensureMap().links:ensureMap().entryLinks;
     const l=(arr||[]).find(x=>x.id===ln.dataset.id);
     if(l){
-      const v=prompt('这条线叫什么',l.label||'');
+      const v=await uiPrompt('这条线叫什么',l.label||'');
       if(v!=null){ l.label=v.trim(); ensureMap().updatedAt=now(); touch(); render(); }
     }
     return;
@@ -1318,7 +1375,7 @@ document.addEventListener('dblclick',function(e){
   if(e.target.closest('.mnode,.mregion')) return;
   const rect=cv.getBoundingClientRect();
   const x=Math.round(e.clientX-rect.left-71), y=Math.round(e.clientY-rect.top-24);
-  const name=prompt('地点名','新地点');
+  const name=await uiPrompt('地点名','新地点');
   if(name==null) return;
   const en=blankEntry('place'); en.title=(name.trim()||'新地点');
   DB.entries.push(en);
@@ -2122,7 +2179,7 @@ function frPaint(){
       +'<span class="mini" style="flex:none">×'+h.count+'</span></div>').join('')
       :'<div class="mini">没有找到</div>');
 }
-function frApply(){
+async function frApply(){
   const q=((document.getElementById('frQ')||{}).value)||'';
   const to=((document.getElementById('frTo')||{}).value)||'';
   const csEl=document.getElementById('frCs');
@@ -2131,7 +2188,7 @@ function frApply(){
   const hits=frScan(q,cs);
   const total=hits.reduce((s,h)=>s+h.count,0);
   if(!total) return toast('没有找到');
-  if(!confirm('把 '+total+' 处「'+q+'」替换成「'+(to||'（空）')+'」？\n替换前会自动存一版。')) return;
+  if(!await uiConfirm('把 '+total+' 处「'+q+'」替换成「'+(to||'（空）')+'」？\n替换前会自动存一版。')) return;
   makeVersion();
   const n=frRun(q,to,cs);
   touch(); render();
@@ -2409,8 +2466,8 @@ function copyText(t){
 }
 const ACT={
   tab(el){ DB.ui.tab=el.dataset.tab; DB.ui.entryId=null; DB.ui.linkMode=false; DB.ui.linkA=null; render(); },
-  rename(){
-    const v=prompt('项目名称',DB.meta.title||'');
+  async rename(){
+    const v=await uiPrompt('项目名称',DB.meta.title||'');
     if(v!=null){ DB.meta.title=v.trim()||'未命名'; touch(); render(); }
   },
   theme(){
@@ -2721,9 +2778,9 @@ const ACT={
     DB.ui.charId=el.dataset.id; DB.ui.entryId=null; DB.ui.tab='chars'; render();
   },
   closeChar(){ DB.ui.charId=null; render(); },
-  delChar(){
+  async delChar(){
     const e=entryBy(DB.ui.charId); if(!e) return;
-    if(!confirm('删除「'+(e.title||'')+'」？跟它相关的关系也会一起删掉。')) return;
+    if(!await uiConfirm('删除「'+(e.title||'')+'」？跟它相关的关系也会一起删掉。')) return;
     DB.entries=DB.entries.filter(x=>x.id!==e.id);
     DB.rels=(DB.rels||[]).filter(r=>r.a!==e.id&&r.b!==e.id);
     DB.ui.charId=null; touch(); render();
@@ -2777,8 +2834,8 @@ const ACT={
     t.kind=$('#thKind')?$('#thKind').value:'';
     touch(); closeModal(); render();
   },
-  delThread(el){
-    if(!confirm('删除这条线索？表里对应的内容也会消失。')) return;
+  async delThread(el){
+    if(!await uiConfirm('删除这条线索？表里对应的内容也会消失。')) return;
     DB.threads=(DB.threads||[]).filter(t=>t.id!==el.dataset.id); touch(); render();
   },
   addEvent(){
@@ -2812,9 +2869,9 @@ const ACT={
   },
   openDlg(el){ DB.ui.dlgId=el.dataset.id; DB.ui.entryId=null; DB.ui.questId=null; renderDrawer(); },
   closeDlg(){ DB.ui.dlgId=null; render(); },
-  delDlg(){
+  async delDlg(){
     const d=curDlg(); if(!d) return;
-    if(!confirm('删除这段对话？')) return;
+    if(!await uiConfirm('删除这段对话？')) return;
     DB.dialogues=DB.dialogues.filter(x=>x.id!==d.id);
     DB.ui.dlgId=null; touch(); render();
   },
@@ -2843,9 +2900,9 @@ const ACT={
   },
   openQuest(el){ DB.ui.questId=el.dataset.id; DB.ui.entryId=null; DB.ui.dlgId=null; renderDrawer(); },
   closeQuest(){ DB.ui.questId=null; render(); },
-  delQuest(){
+  async delQuest(){
     const q=curQuest(); if(!q) return;
-    if(!confirm('删除这个任务？')) return;
+    if(!await uiConfirm('删除这个任务？')) return;
     DB.quests=DB.quests.filter(x=>x.id!==q.id);
     DB.ui.questId=null; touch(); render();
   },
@@ -2860,8 +2917,8 @@ const ACT={
     if(i>=0) q.charIds.splice(i,1); else q.charIds.push(id);
     q.updatedAt=now(); touch(); renderDrawer();
   },
-  saveVer(){
-    const label=prompt('给这一版起个名字（可以留空）','')||'';
+  async saveVer(){
+    const label=(await uiPrompt('给这一版起个名字（可以留空）',''))||'';
     const rec=makeVersion(String(label||'').trim(),'manual');
     if(rec) toast('已存为 v'+rec.n);
     render();
@@ -2952,9 +3009,9 @@ const ACT={
     };
     ITEMDOC.items.push(it); DB.ui.itemSel=id; ITEMDIRTY=true; render();
   },
-  itemDel(){
+  async itemDel(){
     const it=curItem(); if(!it) return;
-    if(!confirm('从文档里删除「'+itemName(it)+'」？保存后才会写入文件。')) return;
+    if(!await uiConfirm('从文档里删除「'+itemName(it)+'」？保存后才会写入文件。')) return;
     ITEMDOC.items=ITEMDOC.items.filter(x=>x.id!==it.id);
     DB.ui.itemSel=(ITEMDOC.items[0]||{}).id||null;
     ITEMDIRTY=true; render();
@@ -2994,24 +3051,24 @@ const ACT={
     DB.map.regions=(DB.map.regions||[]).filter(r=>r.id!==id);
     ensureMap().updatedAt=now(); touch(); render();
   },
-  mapRenameRegion(el){
+  async mapRenameRegion(el){
     const r=(DB.map.regions||[]).find(x=>x.id===el.dataset.id); if(!r) return;
-    const v=prompt('区域名',r.name||'');
+    const v=await uiPrompt('区域名',r.name||'');
     if(v==null) return;
     r.name=v.trim()||'区域'; ensureMap().updatedAt=now(); touch(); render();
   },
   mapSelLink(el){ DB.ui.selLink=el.dataset.id; render(); },
-  delVer(el){
+  async delVer(el){
     const id=el.dataset.id;
     const v=versions().find(x=>vId(x)===id);
     if(!v) return;
-    if(!confirm('删除 '+vName(v)+'？删了就找不回来了。')) return;
+    if(!await uiConfirm('删除 '+vName(v)+'？删了就找不回来了。')) return;
     saveVersions(versions().filter(x=>vId(x)!==id));
     render(); toast('已删除 '+vName(v));
   },
-  delEntry(){
+  async delEntry(){
     const e=curEntry(); if(!e) return;
-    if(!confirm('删除「'+(e.title||'未命名')+'」？正文里的引用会变成无效引用。')) return;
+    if(!await uiConfirm('删除「'+(e.title||'未命名')+'」？正文里的引用会变成无效引用。')) return;
     DB.entries=DB.entries.filter(x=>x.id!==e.id);
     DB.ui.entryId=null; touch(); render();
   },
@@ -3073,10 +3130,10 @@ const ACT={
     else { DB.ui.tab='lib'; openEntryById(id); render(); }
   },
   snap(){ snapshot('手动'); persist(); render(); toast('快照已保存'); },
-  restore(el){
+  async restore(el){
     const list=snaps(), i=+el.dataset.i;
     if(!list[i]) return;
-    if(!confirm('恢复到 '+dt(list[i].at)+' 的快照？当前数据会先存一份快照。')) return;
+    if(!await uiConfirm('恢复到 '+dt(list[i].at)+' 的快照？当前数据会先存一份快照。')) return;
     snapshot('恢复前');
     try{ DB=JSON.parse(list[i].data); }catch(e){ return warn('快照损坏'); }
     DB.ui=Object.assign({tab:'write',nodeId:null,entryId:null,theme:'paper',filter:'',q:'',preview:false},DB.ui||{});
@@ -3085,16 +3142,16 @@ const ACT={
   exportMd(){ download((DB.meta.title||'项目')+'-'+today()+'.md', toMarkdown(),'text/markdown'); },
   exportTxt(){ download((DB.meta.title||'项目')+'-正文-'+today()+'.txt', toTxt()); },
   exportJson(){ download((DB.meta.title||'项目')+'-'+today()+'.json', JSON.stringify(DB,null,1),'application/json'); snapshot('导出前'); },
-  importJson(){
+  async importJson(){
     const inp=document.createElement('input'); inp.type='file'; inp.accept='.json,application/json';
     inp.onchange=()=>{
       const f=inp.files&&inp.files[0]; if(!f) return;
       const r=new FileReader();
-      r.onload=()=>{
+      r.onload=async ()=>{
         try{
           const d=JSON.parse(String(r.result));
           if(!d||!Array.isArray(d.entries)||!Array.isArray(d.nodes)) throw new Error('不是有效的备份');
-          if(!confirm('导入会覆盖当前项目（会先存快照）。继续？')) return;
+          if(!await uiConfirm('导入会覆盖当前项目（会先存快照）。继续？')) return;
           snapshot('导入前');
           DB=d;
           DB.ui=Object.assign({tab:'write',nodeId:null,entryId:null,theme:'paper',filter:'',q:'',preview:false},DB.ui||{});
@@ -3108,19 +3165,19 @@ const ACT={
     };
     inp.click();
   },
-  clearDemo(){
+  async clearDemo(){
     const n=DB.entries.filter(e=>e.demo).length+DB.nodes.filter(x=>x.demo).length;
     if(!n) return toast('没有示例数据了');
-    if(!confirm('删除 '+n+' 条示例内容？（你改过的条目已经不算示例）')) return;
+    if(!await uiConfirm('删除 '+n+' 条示例内容？（你改过的条目已经不算示例）')) return;
     snapshot('清空前');
     DB.entries=DB.entries.filter(e=>!e.demo);
     DB.nodes=DB.nodes.filter(x=>!x.demo);
     DB.ui.nodeId=(chapters()[0]||{}).id||null; DB.ui.entryId=null;
     touch(); render(); toast('已删除示例');
   },
-  wipe(){
-    if(!confirm('清空全部内容？请先导出 JSON。')) return;
-    if(!confirm('再确认一次：所有设定和正文都会消失。')) return;
+  async wipe(){
+    if(!await uiConfirm('清空全部内容？请先导出 JSON。')) return;
+    if(!await uiConfirm('再确认一次：所有设定和正文都会消失。')) return;
     snapshot('清空前');
     DB={v:2,meta:{title:'未命名',logline:'',genre:'',form:'novel',targetWords:60000},entries:[],nodes:[],
         ui:{tab:'write',nodeId:null,entryId:null,theme:DB.ui.theme||'paper',filter:'',q:'',preview:false}};
