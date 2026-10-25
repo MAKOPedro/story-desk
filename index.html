@@ -283,8 +283,12 @@ label.f>span{display:block;font-size:11.5px;color:var(--dim);margin-bottom:4px;l
 .planrail button{width:64px;min-height:46px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;
   border:1px solid transparent;border-radius:8px;background:transparent;cursor:pointer;font-size:11px;color:var(--dim);padding:5px 0}
 .planrail button .ic{font-size:15px;line-height:1}
-.pframe{position:absolute;border:1px dashed var(--line2);border-radius:10px;background:#96583a08;cursor:move}
-.pframe.sel{border-color:var(--accent);background:#96583a12}
+.pframe{position:absolute;cursor:move;--pc:var(--line2)}
+.pframe.sel{--pc:var(--accent)}
+.pf-svg{position:absolute;left:0;top:0;overflow:visible;pointer-events:none}
+.pf-svg rect,.pf-svg ellipse,.pf-svg polygon{fill:#96583a0d;stroke:var(--pc);stroke-width:1.5;stroke-dasharray:6 5}
+.pframe.sel .pf-svg rect,.pframe.sel .pf-svg ellipse,.pframe.sel .pf-svg polygon{fill:#96583a18}
+.pframe[data-shape="ellipse"] .pf-label,.pframe[data-shape="triangle"] .pf-label{left:50%;transform:translateX(-50%)}
 .pframe .pf-label{position:absolute;left:12px;top:-11px;background:var(--paper);padding:1px 7px;font-size:11.5px;color:var(--dim);border-radius:5px;white-space:nowrap;outline:none}
 .pframe .pf-handle{position:absolute;right:-5px;bottom:-5px;width:12px;height:12px;border-radius:3px;background:var(--panel);border:1px solid var(--line2);cursor:nwse-resize}
 .pstick{position:absolute;cursor:move;user-select:none;line-height:1}
@@ -1470,6 +1474,14 @@ function planPaths(){
   });
   return s;
 }
+function planShapeName(s){ return ({rect:'矩形',ellipse:'圆形',triangle:'三角形'})[s]||'矩形'; }
+function planShapeSVG(shape,w,h){
+  const W=Math.max(2,w), H=Math.max(2,h);
+  const s='<svg class="pf-svg" width="'+W+'" height="'+H+'" viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="none">';
+  if(shape==='ellipse') return s+'<ellipse cx="'+(W/2)+'" cy="'+(H/2)+'" rx="'+Math.max(1,W/2-2)+'" ry="'+Math.max(1,H/2-2)+'"/></svg>';
+  if(shape==='triangle') return s+'<polygon points="'+(W/2)+',2 '+(W-2)+','+(H-2)+' 2,'+(H-2)+'"/></svg>';
+  return s+'<rect x="1.5" y="1.5" width="'+Math.max(1,W-3)+'" height="'+Math.max(1,H-3)+'" rx="10"/></svg>';
+}
 function railBtn(act,icon,label,on){
   return '<button data-act="'+act+'"'+(on?' class="on"':'')+' title="'+esc(label)+'">'
     +'<span class="ic">'+icon+'</span><span>'+esc(label)+'</span></button>';
@@ -1496,7 +1508,7 @@ function viewPlan(){
     +'</div>'
     +'<div class="planwrap" id="planwrap"><div class="plancanvas'+(DB.ui.planBig?' planbig':'')+(lm?' linkmode':'')+(DB.ui.planRect?' rectmode':'')+'" id="plancanvas" style="zoom:'+z+'">'
     +'<svg class="planlinks" id="planlinks">'+planPaths()+'</svg>'
-    +(DB.ui.planRect?'<div class="recthint">按住鼠标拖动画矩形 · Esc 取消</div>':'');
+    +(DB.ui.planRect?'<div class="recthint">按住鼠标拖动画'+planShapeName(DB.ui.planShape)+' · Esc 取消</div>':'');
   if(!p.nodes.length&&!p.frames.length){
     h+='<div style="position:absolute;left:80px;top:100px;color:var(--dim2);font-family:var(--serif);line-height:2.1">'
       +'左边「主题」放中心，Tab 长分支，「方框」圈出一块区域。<br>'
@@ -1504,7 +1516,8 @@ function viewPlan(){
   }
   p.frames.forEach(fr=>{
     const sel=DB.ui.planSel===fr.id;
-    h+='<div class="pframe'+(sel?' sel':'')+'" data-id="'+fr.id+'" style="left:'+(fr.x||0)+'px;top:'+(fr.y||0)+'px;width:'+(fr.w||320)+'px;height:'+(fr.h||200)+'px;border-color:'+(fr.color||'')+'">'
+    h+='<div class="pframe'+(sel?' sel':'')+'" data-id="'+fr.id+'" data-shape="'+(fr.shape||'rect')+'" style="left:'+(fr.x||0)+'px;top:'+(fr.y||0)+'px;width:'+(fr.w||320)+'px;height:'+(fr.h||200)+'px'+(fr.color?(';--pc:'+fr.color):'')+'">'
+      +planShapeSVG(fr.shape||'rect',fr.w||320,fr.h||200)
       +'<div class="pf-label" data-field="flabel">'+esc(fr.label||'区域')+'</div>'
       +'<div class="pf-handle" data-id="'+fr.id+'"></div>'
       +'</div>';
@@ -1634,10 +1647,11 @@ document.addEventListener('mousedown',function(e){
     const zz=DB.ui.planZoom||1;
     const rr=cv.getBoundingClientRect();
     let pv=document.getElementById('rectprev');
-    if(!pv){ pv=document.createElement('div'); pv.id='rectprev'; pv.className='rectprev'; cv.appendChild(pv); }
+    if(!pv){ pv=document.createElement('div'); pv.id='rectprev'; pv.className='pframe'; cv.appendChild(pv); }
     const x0=(e.clientX-rr.left)/zz, y0=(e.clientY-rr.top)/zz;
-    PLANRECTDRAW={x0:x0,y0:y0,cv:cv};
+    PLANRECTDRAW={x0:x0,y0:y0,cv:cv,shape:DB.ui.planShape||'rect'};
     pv.style.left=x0+'px'; pv.style.top=y0+'px'; pv.style.width='0px'; pv.style.height='0px'; pv.style.display='block';
+    pv.innerHTML=planShapeSVG(PLANRECTDRAW.shape,1,1);
     e.preventDefault(); return;
   }
   const sh=e.target.closest('.ps-handle');
@@ -1666,7 +1680,10 @@ document.addEventListener('mousemove',function(e){
     const xx=(e.clientX-rr.left)/zz, yy=(e.clientY-rr.top)/zz;
     const l=Math.min(dd.x0,xx), t2=Math.min(dd.y0,yy), w=Math.abs(xx-dd.x0), hh=Math.abs(yy-dd.y0);
     const pv=document.getElementById('rectprev');
-    if(pv){ pv.style.left=l+'px'; pv.style.top=t2+'px'; pv.style.width=w+'px'; pv.style.height=hh+'px'; }
+    if(pv){
+      pv.style.left=l+'px'; pv.style.top=t2+'px'; pv.style.width=w+'px'; pv.style.height=hh+'px';
+      pv.innerHTML=planShapeSVG(dd.shape||'rect',Math.max(2,w),Math.max(2,hh));
+    }
     dd.last={l:l,t:t2,w:w,h:hh};
     e.preventDefault(); return;
   }
@@ -1707,7 +1724,7 @@ document.addEventListener('mouseup',function(){
     const r=dd.last||{l:dd.x0,t:dd.y0,w:0,h:0};
     const p2=ensurePlan();
     const fr={id:planNewId('fr_'),x:Math.round(r.l),y:Math.round(r.t),
-      w:Math.round(r.w>40?r.w:320), h:Math.round(r.h>30?r.h:200), label:'新区域', color:''};
+      w:Math.round(r.w>40?r.w:320), h:Math.round(r.h>30?r.h:200), label:'新区域', color:'', shape:(dd.shape||'rect')};
     p2.frames.push(fr); p2.updatedAt=now();
     DB.ui.planRect=false; touch(); render();
     setTimeout(()=>planFrameRename(fr.id),60);
@@ -1766,6 +1783,10 @@ document.addEventListener('contextmenu',function(e){
       {act:'planCtxFrameName',icon:'✎',label:'改名字',v:id},
       {act:'planCtxFrameColor',icon:'▨',label:'换个颜色',v:id},
       {sep:true},
+      {act:'planFrameSetShape',icon:'▭',label:'改成矩形',v:id+':rect'},
+      {act:'planFrameSetShape',icon:'○',label:'改成圆形',v:id+':ellipse'},
+      {act:'planFrameSetShape',icon:'△',label:'改成三角形',v:id+':triangle'},
+      {sep:true},
       {act:'planDelFrame',icon:'×',label:'删除方框',v:id}
     ]);
     return;
@@ -1781,7 +1802,9 @@ document.addEventListener('contextmenu',function(e){
   openCtx(e.clientX,e.clientY,[
     {head:'画布'},
     {act:'planAdd',icon:'＋',label:'新建主题'},
-    {act:'planFrame',icon:'▭',label:'新建方框'},
+    {act:'planFrameShape',icon:'▭',label:'画矩形',v:'rect'},
+    {act:'planFrameShape',icon:'○',label:'画圆形',v:'ellipse'},
+    {act:'planFrameShape',icon:'△',label:'画三角形',v:'triangle'},
     {act:'planEmoji',icon:'☺',label:'插入表情'},
     {act:'planImage',icon:'▣',label:'插入图片'},
     {sep:true},
@@ -3416,7 +3439,20 @@ const ACT={
     DB.ui.planRect=!DB.ui.planRect;
     if(DB.ui.planRect){ DB.ui.planLink=false; DB.ui.planLinkA=null; }
     render();
-    toast(DB.ui.planRect?'在空白处按住拖动画矩形 · Esc 取消':'已退出画框');
+    toast(DB.ui.planRect?('在空白处拖动画'+planShapeName(DB.ui.planShape)+' · Esc 取消'):'已退出画框');
+  },
+  planFrameShape(el){
+    DB.ui.planShape=el.dataset.v||'rect';
+    DB.ui.planRect=true; DB.ui.planLink=false; DB.ui.planLinkA=null;
+    render();
+    toast('在空白处拖动画'+planShapeName(DB.ui.planShape)+' · Esc 取消');
+  },
+  planFrameSetShape(el){
+    const parts=String(el.dataset.v||'').split(':');
+    const fr=planFrame(parts[0]); if(!fr) return;
+    fr.shape=parts[1]||'rect';
+    ensurePlan().updatedAt=now(); touch(); render();
+    toast('已改成'+planShapeName(fr.shape));
   },
   planEmoji(){
     modal('插入表情',
@@ -4294,7 +4330,7 @@ function fixNode(n){
 }
 function init(){
   DB=load();
-  DB.ui=Object.assign({tab:'write',nodeId:null,entryId:null,charId:null,theme:'paper',filter:'',q:'',preview:false,zen:false,sub:'outline',collapsed:[],itemSrv:'',richEdit:true,planSel:null,planZoom:1,planBig:false,planLink:false,planLinkA:null,planRect:false},DB.ui||{});
+  DB.ui=Object.assign({tab:'write',nodeId:null,entryId:null,charId:null,theme:'paper',filter:'',q:'',preview:false,zen:false,sub:'outline',collapsed:[],itemSrv:'',richEdit:true,planSel:null,planZoom:1,planBig:false,planLink:false,planLinkA:null,planRect:false,planShape:'rect'},DB.ui||{});
   if(!DB.plan||typeof DB.plan!=='object'||!Array.isArray(DB.plan.nodes)) DB.plan={nodes:[],updatedAt:0};
   if(!Array.isArray(DB.ui.collapsed)) DB.ui.collapsed=[];
   if(!Array.isArray(DB.assets)) DB.assets=[];
