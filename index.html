@@ -418,10 +418,45 @@ table.mx td input:focus{background:var(--chip);box-shadow:none}
   .rfdetail{grid-column:1/-1;border-top:1px solid var(--line)}
   .rfmeta{grid-template-columns:1fr}
 }
+
+/* ---------- 视觉系统 ---------- */
+:root{--r-s:6px;--r-m:9px;--r-l:12px;--t-fast:120ms cubic-bezier(.2,.7,.3,1);--t-mid:180ms cubic-bezier(.2,.7,.3,1)}
+html[data-theme="night"]{--dim:#9c9586;--dim2:#77726a}
+button,.btn,.nav button,.rit,.rfitem,.pcard,.mnode,.trow,.pitem,.rfkind,.rftag,.planrail button{transition:background var(--t-fast),color var(--t-fast),border-color var(--t-fast),box-shadow var(--t-fast)}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+.nav{overflow-x:auto;scrollbar-width:none}
+.nav::-webkit-scrollbar{display:none}
+.navsep{width:1px;height:16px;background:var(--line);margin:0 7px;flex:none;align-self:center}
+.topbar-prog{position:absolute;left:0;right:0;bottom:0;height:2px;background:transparent;pointer-events:none}
+.topbar-prog i{display:block;height:100%;background:var(--accent);opacity:.5;transition:width var(--t-mid)}
+.trow{position:relative}
+.trow[data-d="1"]::before,.trow[data-d="2"]::before,.trow[data-d="3"]::before,.trow[data-d="4"]::before{content:"";position:absolute;top:1px;bottom:1px;width:1px;background:var(--line);pointer-events:none}
+.trow[data-d="1"]::before{left:11px}
+.trow[data-d="2"]::before{left:24px}
+.trow[data-d="3"]::before{left:37px}
+.trow[data-d="4"]::before{left:50px}
+.emptybox{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;padding:54px 20px;color:var(--dim2);text-align:center}
+.emptybox .ei{font-size:24px;opacity:.45;line-height:1}
+.emptybox .et{font-family:var(--serif);font-size:14px;color:var(--dim)}
+.emptybox .es{font-size:12px;line-height:1.9;max-width:340px}
+.setjump{position:sticky;top:0;z-index:6;display:flex;gap:6px;flex-wrap:wrap;padding:0 0 12px;background:linear-gradient(var(--paper) 70%,transparent)}
+.setjump button{background:var(--panel);border:1px solid var(--line2);border-radius:14px;padding:3px 12px;font-size:11.5px;color:var(--dim);cursor:pointer}
+.setjump button:hover{color:var(--accent);border-color:var(--accent)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff8ef}
+.btn.ghost{background:transparent;border-color:transparent;color:var(--dim)}
+.btn.ghost:hover{background:var(--hover);border-color:var(--line2);color:var(--ink)}
+@media print{
+  body{background:#fff;color:#000;display:block;height:auto;overflow:visible}
+  .top,.side,.ctx,.mtoolbar,.planrail,.nav,.setjump,.foot,.outhead,#drawer{display:none!important}
+  #view{overflow:visible;height:auto}
+  .write,.sheet,.out{display:block;height:auto;overflow:visible;border:0;box-shadow:none;padding:0;margin:0;max-width:none}
+  .prose.edit,.preview{min-height:0}
+  .pimg{max-width:70%;break-inside:avoid}
+}
 </style>
 </head>
 <body>
-<header class="top">
+<header class="top" style="position:relative"><div class="topbar-prog"><i id="progbar" style="width:0%"></i></div>
   <div class="logo">创作台</div>
   <div class="ptitle" id="ptitle" data-act="rename">未命名</div>
   <nav class="nav" id="nav"></nav>
@@ -847,6 +882,14 @@ function snaps(){ return versions(); }
 /* ---------- 小部件 ---------- */
 function toast(m){ const t=$('#toast'); t.textContent=m; t.classList.add('on'); clearTimeout(t._h); t._h=setTimeout(()=>t.classList.remove('on'),1800); }
 function warn(m){ const b=$('#errbar'); b.textContent=m; b.classList.add('on'); clearTimeout(b._h); b._h=setTimeout(()=>b.classList.remove('on'),9000); }
+function emptyBox(icon,title,sub,actLabel,actName){
+  return '<div class="emptybox">'
+    +'<div class="ei">'+(icon||'◌')+'</div>'
+    +'<div class="et">'+esc(title||'')+'</div>'
+    +(sub?('<div class="es">'+esc(sub)+'</div>'):'')
+    +(actLabel?('<button class="btn primary" data-act="'+actName+'">'+esc(actLabel)+'</button>'):'')
+    +'</div>';
+}
 function modal(title,body,foot,wide){
   $('#modal').innerHTML='<div class="mbox" style="'+(wide?'width:min(1000px,96vw)':'')+'"><div class="mh"><b>'+esc(title)+'</b></div><div class="mb">'+(body||'')+'</div><div class="mf">'+(foot||'<button class="btn" data-act="closeModal">关闭</button>')+'</div></div>';
   $('#modal').classList.add('on');
@@ -938,7 +981,12 @@ function render(){
   document.documentElement.dataset.theme=DB.ui.theme||'paper';
   const tb=$('.themebtn'); if(tb) tb.textContent=(DB.ui.theme==='night')?'纸':'夜';
   $('#ptitle').textContent=DB.meta.title||'未命名';
-  $('#nav').innerHTML=TABS.map(t=>'<button data-act="tab" data-tab="'+t[0]+'" class="'+(DB.ui.tab===t[0]?'on':'')+'">'+t[1]+'</button>').join('');
+  try{
+    const pb=document.getElementById('progbar');
+    if(pb){ const tw=totalWords(), tg=DB.meta.targetWords||0; pb.style.width=(tg?Math.min(100,Math.round(tw/tg*100)):0)+'%'; }
+  }catch(e){}
+  const NAVGAP=['chars','setup'];
+  $('#nav').innerHTML=TABS.map(t=>((NAVGAP.indexOf(t[0])>=0||t[0]==='setup')?'<span class="navsep"></span>':'')+'<button data-act="tab" data-tab="'+t[0]+'"'+(DB.ui.tab===t[0]?' class="on"':'')+'>'+t[1]+'</button>').join('');
   const m={write:viewWrite,outline:viewOutline,plan:viewPlan,chars:viewChars,map:viewMap,items:viewItems,dlg:viewDlg,quest:viewQuest,lib:viewLib,refs:viewRefs,setup:viewSetup}[DB.ui.tab]||viewWrite;
   const oldWrap=$('#view .mapwrap');
   const keepX=oldWrap?oldWrap.scrollLeft:0, keepY=oldWrap?oldWrap.scrollTop:0;
@@ -1002,7 +1050,7 @@ function trow(n,depth){
   const kids=children(n.id).length;
   const isEmpty=!kids&&!wc;
   const col=kids&&(DB.ui.collapsed||[]).indexOf(n.id)>=0;
-  return '<div class="trow'+(n.type==='part'?' part':'')+(DB.ui.nodeId===n.id?' on':'')+(isEmpty?' empty':'')+'" draggable="true" data-act="openNode" data-id="'+n.id+'" style="padding-left:'+(4+depth*13)+'px">'
+  return '<div class="trow'+(n.type==='part'?' part':'')+(DB.ui.nodeId===n.id?' on':'')+(isEmpty?' empty':'')+'" draggable="true" data-act="openNode" data-id="'+n.id+'" data-d="'+Math.min(depth,4)+'" style="padding-left:'+(4+depth*13)+'px">'
     +'<span class="cv'+(kids?' has':'')+'" data-act="toggleCollapse" data-id="'+n.id+'">'+(kids?(col?'▶':'▼'):'')+'</span>'
     +'<span class="dot"></span><span class="tw">'+esc(n.title||'（未命名）')+(isEmpty?' <span class="mini">空</span>':'')+'</span>'
     +'<span class="tt">'+esc(typeLabel(n))+'</span>'
@@ -2115,8 +2163,7 @@ function viewRefs(){
   h+='</div>';
   h+='<div class="rfdetail">';
   if(!cur){
-    h+='<div class="empty">右边选一条素材，或者点「＋ 素材」新建<br>'
-      +'<span class="mini">文献、网页链接、原文摘录、自己的笔记都能放这儿</span></div>';
+    h+=emptyBox('❑','还没有选中素材','文献、网页链接、原文摘录、自己的笔记都能放在这里。','＋ 新建素材','refAdd');
   }else{
     h+='<div class="rfhead">'
       +refBadge(cur.kind)
@@ -2185,7 +2232,7 @@ function viewItems(){
       ):('<span class="mini">先启动本地编辑器，再点连接</span>'))
     +'</div>';
   if(!ITEMDOC){
-    h+='<div class="empty">还没有连接<br><span class="mini">在项目根目录运行：powershell -ExecutionPolicy Bypass -File Tools/ItemEditor/start_item_editor.ps1<br>然后点上面的「连接」</span></div>';
+    h+=emptyBox('▤','还没有连上物品编辑器','先在项目根目录运行 Tools/ItemEditor/start_item_editor.ps1，再点上面的「连接」。');
     return h+'</div>';
   }
   const list=ITEMDOC.items||[];
@@ -2952,7 +2999,14 @@ async function frApply(){
 function viewSetup(){
   const s=snaps();
   let h='<div class="out"><div class="outhead"><div><h2>设置与备份</h2><p>单文件、离线，数据在你自己的浏览器里。</p></div></div>';
-  h+='<div class="curve" style="padding:18px"><h4 style="font-size:11px;letter-spacing:.14em;color:var(--dim2);margin:0 0 10px">项目</h4>'
+  h+='<div class="setjump">'
+    +'<button data-act="setJump" data-v="sec-proj">项目</button>'
+    +'<button data-act="setJump" data-v="sec-bk">本地备份</button>'
+    +'<button data-act="setJump" data-v="sec-cloud">云备份</button>'
+    +'<button data-act="setJump" data-v="sec-check">检查</button>'
+    +'<button data-act="setJump" data-v="sec-ver">版本存档</button>'
+    +'</div>';
+  h+='<div class="curve" style="padding:18px"><h4 style="font-size:11px;letter-spacing:.14em;color:var(--dim2);margin:0 0 10px" id="sec-proj">项目</h4>'
     +'<label class="f"><span>标题</span><input type="text" data-bind="meta.title" value="'+esc(DB.meta.title||'')+'"></label>'
     +'<label class="f"><span>一句话故事</span><textarea data-bind="meta.logline" rows="2">'+esc(DB.meta.logline||'')+'</textarea></label>'
     +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">'
@@ -2978,7 +3032,7 @@ function viewSetup(){
     +'<button class="btn" data-act="openFr" title="Ctrl+H">查找替换</button>'
     +'</div>';
   h+='<div class="curve" style="padding:18px;margin-bottom:18px">'
-    +'<h4 style="font-size:11px;letter-spacing:.14em;color:var(--dim2);margin:0 0 10px">本地备份 · 文件夹</h4>'
+    +'<h4 style="font-size:11px;letter-spacing:.14em;color:var(--dim2);margin:0 0 10px" id="sec-bk">本地备份 · 文件夹</h4>'
     +'<div class="mini" style="margin-bottom:10px;line-height:1.9">选一个文件夹，之后每 10 分钟自动写一份 <b>创作台-时间.json</b>，只保留最近 30 份，另有一份 <b>最新.json</b> 始终是最新。<br>'
     +'这是浏览器存储之外的第二道保险：清缓存、换电脑、浏览器崩了，文件还在。</div>'
     +'<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">'
@@ -2988,7 +3042,7 @@ function viewSetup(){
     +'<span class="mini" id="bkStatus">'+esc(bkStatusText())+'</span>'
     +'</div></div>';
   const sy=DB.sync||{};  h+='<div class="curve" style="padding:18px;margin-bottom:18px">'
-    +'<h4 style="font-size:11px;letter-spacing:.14em;color:var(--dim2);margin:0 0 12px">云备份 · 私有仓库</h4>'
+    +'<h4 style="font-size:11px;letter-spacing:.14em;color:var(--dim2);margin:0 0 12px" id="sec-cloud">云备份 · 私有仓库</h4>'
     +'<div style="display:grid;grid-template-columns:1.3fr 110px 1.2fr;gap:10px">'
     +'<label class="f"><span>仓库 owner/repo</span><input type="text" data-bind="sync.repo" value="'+esc(sy.repo||DEFAULT_REPO)+'" placeholder="owner/repo"></label>'
     +'<label class="f"><span>分支</span><input type="text" data-bind="sync.branch" value="'+esc(sy.branch||'')+'" placeholder="main"></label>'
@@ -3014,9 +3068,9 @@ function viewSetup(){
     +'按章分片，所以几个人各写各的章不会互相覆盖；同一章谁最后改谁生效。<br>'
     +'Token 需要 <b>Contents: Read and write</b> 权限，只授权这一个仓库。改了 Token 记得点一下别处让它失焦保存。</div>'
     +'</div>';
-  h+='<h4 style="font-size:11px;letter-spacing:.14em;color:var(--dim2);margin:18px 0 8px">检查</h4>';
+  h+='<h4 style="font-size:11px;letter-spacing:.14em;color:var(--dim2);margin:18px 0 8px" id="sec-check">检查</h4>';
   h+=checks().map(x=>'<div class="note '+(x.lv==='bad'?'warn':'')+'" style="margin-bottom:6px">'+esc(x.t)+(x.s?'<div class="mini">'+esc(x.s)+'</div>':'')+'</div>').join('');
-  h+='<h4 style="font-size:11px;letter-spacing:.14em;color:var(--dim2);margin:22px 0 8px">版本存档</h4>';
+  h+='<h4 style="font-size:11px;letter-spacing:.14em;color:var(--dim2);margin:22px 0 8px" id="sec-ver">版本存档</h4>';
   const manV=s.filter(v=>vKind(v)==='manual');
   const autV=s.filter(v=>vKind(v)==='auto');
   const vrow=(v,isAuto)=>'<div class="row" style="font-size:12.5px;padding:5px 0;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px">'
@@ -3222,6 +3276,10 @@ const ACT={
   async rename(){
     const v=await uiPrompt('项目名称',DB.meta.title||'');
     if(v!=null){ DB.meta.title=v.trim()||'未命名'; touch(); render(); }
+  },
+  setJump(el){
+    const t=document.getElementById(el.dataset.v);
+    if(t&&t.scrollIntoView) t.scrollIntoView({behavior:'smooth',block:'start'});
   },
   theme(){
     DB.ui.theme=DB.ui.theme==='night'?'paper':'night';
