@@ -2829,7 +2829,9 @@ function questDrawerHTML(q){
 function viewLib(){
   if(DB.ui.libBoard) return libBoardView();
   const f=DB.ui.filter||'', q=(DB.ui.q||'').toLowerCase();
+  const par=DB.ui.libParent||'';
   let list=DB.entries.slice();
+  if(par) list=list.filter(e=>e.id===par||e.parentId===par);
   if(f) list=list.filter(e=>e.type===f);
   if(q) list=list.filter(e=>((e.title||'')+' '+(e.body||'')+' '+(e.alias||[]).join(' ')+' '+JSON.stringify(e.fields||{})).toLowerCase().indexOf(q)>=0);
   list.sort((a,b)=>(b.updatedAt||0)-(a.updatedAt||0));
@@ -2840,6 +2842,15 @@ function viewLib(){
     if(!n) return;
     h+='<div class="rit'+(f===k?' on':'')+'" data-act="filter" data-v="'+k+'">'+ET[k].icon+' '+ET[k].label+'<em>'+n+'</em></div>';
   });
+  const parents=DB.entries.filter(e=>DB.entries.some(x=>x.parentId===e.id));
+  if(parents.length){
+    h+='<h4 style="margin-top:16px">归属</h4>';
+    h+='<div class="rit'+(par?'':' on')+'" data-act="libParent" data-v="">全部<em>'+DB.entries.length+'</em></div>';
+    parents.slice(0,20).forEach(e=>{
+      const n=DB.entries.filter(x=>x.parentId===e.id).length;
+      h+='<div class="rit'+(par===e.id?' on':'')+'" data-act="libParent" data-v="'+e.id+'">↳ '+esc(e.title||'未命名')+'<em>'+n+'</em></div>';
+    });
+  }
   h+='</aside><div class="libmain"><div class="libbar">'
     +'<input type="search" data-bind="ui.q" value="'+esc(DB.ui.q||'')+'" placeholder="搜索设定…" style="max-width:360px">'
     +'<span class="mini">'+list.length+' 条</span><div style="flex:1"></div>'
@@ -2879,7 +2890,7 @@ function entryCard(e){
     +(e.status==='canon'?'<span class="chip canon">正典</span>':e.status==='cut'?'<span class="chip cut">废弃</span>':'')
     +'</div>'
     +'<div class="x">'+esc(clip(entryExcerpt(e),64)||'—')+'</div>'
-    +'<div class="f"><span class="chip">'+T.label+'</span>'
+    +'<div class="f">'+(function(){ const pe=e.parentId?DB.entries.find(x=>x.id===e.parentId):null; return pe?'<span class="chip">↳ '+esc(pe.title||'')+'</span> ':''; })()+'<span class="chip">'+T.label+'</span>'
     +((e.alias||[]).length?'<span class="chip">又名 '+(e.alias||[]).length+'</span>':'')
     +(rc?'<span class="chip">出现 '+rc+' 章</span>':'')
     +'</div></div>';
@@ -2911,6 +2922,22 @@ function drawerHTML(e){
   h+='<div class="db">';
   h+='<label class="f"><span>名称</span><input type="text" data-bind="entry.title" value="'+esc(e.title)+'" style="font-family:var(--serif);font-size:17px"></label>';
   h+='<label class="f"><span>又名 / 别称（逗号分隔，正文里提到也算）</span><input type="text" data-bind="entry.alias" value="'+esc((e.alias||[]).join('，'))+'"></label>';
+  {
+    const opts=DB.entries.filter(x=>x.id!==e.id);
+    const kids=DB.entries.filter(x=>x.parentId===e.id);
+    h+='<label class="f"><span>归到哪个词条下（把相关设定收进同一个词条）</span><select data-act="setParent">'
+      +'<option value="">（不归类）</option>'
+      +opts.map(x=>'<option value="'+x.id+'"'+(e.parentId===x.id?' selected':'')+'>'+(x.type?(ET[x.type].label+' · '):'')+esc(x.title||'未命名')+'</option>').join('')
+      +'</select></label>';
+    h+='<h5>包含的设定（'+kids.length+'）</h5>';
+    h+=kids.length
+      ? kids.map(k=>'<div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px dashed var(--line)">'
+          +'<span class="mini" style="width:44px;flex:none">'+ET[k.type].label+'</span>'
+          +'<b style="flex:1;cursor:pointer;font-size:12.5px" data-act="openEntry" data-id="'+k.id+'">'+esc(k.title||'未命名')+'</b>'
+          +'<button class="btn sm ghost" data-act="detachChild" data-id="'+k.id+'" title="移出">移出</button></div>').join('')
+      : '<div class="hint">还没有。相关的人物、地点、名词都可以放进来。</div>';
+    h+='<div style="margin:6px 0 14px"><button class="btn sm" data-act="addChild">＋ 子设定</button></div>';
+  }
   h+='<h5>设定</h5>';
   (T.fields||[]).forEach(f=>{
     const k=f[0],kind=f[1];
@@ -4153,6 +4180,29 @@ const ACT={
     if(i>=0) q.charIds.splice(i,1); else q.charIds.push(id);
     q.updatedAt=now(); touch(); renderDrawer();
   },
+  libParent(el){ DB.ui.libParent=el.dataset.v||''; render(); },
+  detachChild(el){ const k=DB.entries.find(x=>x.id===el.dataset.id); if(!k) return; k.parentId=null; k.updatedAt=now(); touch(); render(); },
+  addChild(){
+    const p=curEntry(); if(!p) return;
+    const en=blankEntry(p.type);
+    en.title='新设定'; en.parentId=p.id;
+    DB.entries.push(en);
+    DB.ui.entryId=en.id; touch(); render();
+    setTimeout(()=>{ const x=$('#drawer input[data-bind="entry.title"]'); if(x){ x.focus(); x.select(); } },60);
+  },
+  setParent(el){
+    const e=curEntry(); if(!e) return;
+    const id=el.value||'';
+    if(id){
+      let cur=DB.entries.find(x=>x.id===id), guard=0;
+      while(cur&&guard++<30){
+        if(cur.id===e.id){ el.value=e.parentId||''; return toast('不能归到自己或自己的子项下'); }
+        cur=cur.parentId?DB.entries.find(x=>x.id===cur.parentId):null;
+      }
+    }
+    e.parentId=id||null; e.updatedAt=now(); touch(); render();
+    toast(id?'已归类':'已移出归类');
+  },
   async saveVer(){
     const list=versions();
     const next=list.reduce((m,v)=>Math.max(m,v.n||0),0)+1;
@@ -4537,6 +4587,7 @@ const ACT={
   async delEntry(){
     const e=curEntry(); if(!e) return;
     if(!await uiConfirm('删除「'+(e.title||'未命名')+'」？正文里的引用会变成无效引用。')) return;
+    DB.entries.forEach(x=>{ if(x.parentId===e.id) x.parentId=null; });
     DB.entries=DB.entries.filter(x=>x.id!==e.id);
     DB.ui.entryId=null; touch(); render();
   },
@@ -5123,6 +5174,7 @@ document.addEventListener('change',e=>{
   if(rt){ render(); return; }
   const el=e.target;
   if(el.id==='ghToken'){ setToken(String(el.value||'').trim()); toast(el.value?'Token 已保存':'Token 已清除'); return; }
+  if(el.dataset&&el.dataset.act==='setParent'){ ACT.setParent(el); return; }
   if(el.dataset&&el.dataset.evch){
     const ev=(DB.events||[]).find(x=>x.id===el.dataset.evch);
     if(ev){ ev.chapterId=el.value; touch(); }
@@ -5257,6 +5309,7 @@ function fixEntry(e){
   if(!e.fields||typeof e.fields!=='object'||Array.isArray(e.fields)) e.fields={};
   if(typeof e.title!=='string') e.title='';
   if(typeof e.body!=='string') e.body='';
+  if(e.parentId!=null&&typeof e.parentId!=='string') e.parentId=null;
   e.updatedAt=e.updatedAt||now(); e.createdAt=e.createdAt||e.updatedAt;
   return e;
 }
