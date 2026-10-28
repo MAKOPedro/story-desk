@@ -1333,6 +1333,18 @@ function activeRich(){
   const el=ceEl();
   return (el&&el.isContentEditable)?el:null;
 }
+function ctxRich(){
+  try{
+    if(!CTXRANGE) return null;
+    let n=CTXRANGE.commonAncestorContainer;
+    if(n&&n.nodeType===3) n=n.parentNode;
+    while(n&&n.nodeType===1){
+      if(n.id==='eText'||(n.classList&&n.classList.contains('drawer-rich'))) return n;
+      n=n.parentNode;
+    }
+  }catch(e){}
+  return null;
+}
 function syncRich(el){
   if(!el) return;
   if(el.id==='eText'){ syncCE(); return; }
@@ -1363,10 +1375,20 @@ function fmtInside(kind,val,scope){
   return null;
 }
 function fmtApply(kind,val){
-  const el=activeRich();
+  const el=activeRich()||ctxRich();
   if(!el) return toast('先点进一个可编辑的区域');
-  const sel=window.getSelection(); if(!sel||!sel.rangeCount) return;
-  const r=sel.getRangeAt(0);
+  const sel=window.getSelection();
+  if(!sel) return;
+  let r=sel.rangeCount?sel.getRangeAt(0):null;
+  if((!r||r.collapsed)&&CTXRANGE&&!CTXRANGE.collapsed){
+    try{
+      if(el.contains(CTXRANGE.commonAncestorContainer)){
+        r=CTXRANGE;
+        sel.removeAllRanges(); sel.addRange(r);
+      }
+    }catch(e){}
+  }
+  if(!r) return;
   if(r.collapsed){
     const span=document.createElement('span');
     if(kind==='f'){ span.className='fmt'; span.dataset.f=val; span.setAttribute('style',fmtStyle(val)); }
@@ -1393,6 +1415,7 @@ function fmtApply(kind,val){
   r.insertNode(span);
   const r2=document.createRange(); r2.selectNodeContents(span);
   sel.removeAllRanges(); sel.addRange(r2);
+  CTXRANGE=null;
   syncRich(el); hideFmtBar();
 }
 function fmtClear(){
@@ -4857,6 +4880,10 @@ function closeCtx(){
 }
 function openCtx(x,y,items,sel){
   CTXSEL=sel||{s:0,e:0};
+  try{
+    const s0=window.getSelection();
+    CTXRANGE=(s0&&s0.rangeCount)?s0.getRangeAt(0).cloneRange():null;
+  }catch(e){ CTXRANGE=null; }
   let m=document.getElementById('ctxmenu');
   if(!m){ m=document.createElement('div'); m.id='ctxmenu'; m.className='ctxmenu'; document.body.appendChild(m); }
   m.innerHTML=items.map(it=>{
@@ -4865,6 +4892,7 @@ function openCtx(x,y,items,sel){
     if(it.bar) return '<div class="ctxbar">'+it.bar.map(b=>'<button data-act="'+b.act+'"'+(b.v!=null?(' data-v="'+esc(b.v)+'"'):'')+' title="'+esc(b.title||'')+'"'+(b.color?(' style="color:'+b.color+'"'):'')+'>'+b.icon+'</button>').join('')+'</div>';
     return '<button data-act="'+it.act+'"'+(it.v!=null?(' data-v="'+esc(it.v)+'"'):'')+'><span class="ic">'+(it.icon||'')+'</span>'+esc(it.label)+'</button>';
   }).join('');
+  m.onmousedown=function(ev){ if(ev.target&&ev.target.closest&&ev.target.closest('button')) ev.preventDefault(); };
   m.style.display='block';
   const r=m.getBoundingClientRect();
   m.style.left=Math.max(8,Math.min(x,window.innerWidth-r.width-8))+'px';
