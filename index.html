@@ -499,6 +499,8 @@ html[data-theme="night"]{--c-danger:#e0836f;--c-warn:#d9ab55;--c-ok:#86b394;--c-
 const KEY='story-desk.v1';
 const SN='story-desk.snap';
 let DB=null;
+let STORAGE_DIAG='';      // 存储异常的具体原因，显示在红条里
+let BROKEN_KEY='';        // 解析失败时，原始数据被另存的键名
 
 /* ---------- 词条类型 ---------- */
 const ET={
@@ -682,19 +684,50 @@ function stripDemo(d){
 /* ---------- 存储 ---------- */
 let storageOK=true,lastSave=0,saveTimer=null;
 function load(){
+  let raw=null;
   try{
-    const raw=localStorage.getItem(KEY);
-    if(!raw) return emptyDB();
-    const d=JSON.parse(raw);
-    if(!d||!Array.isArray(d.entries)||!Array.isArray(d.nodes)) return emptyDB();
-    d=stripDemo(d);
-    try{ if(d.sync&&/story-desk-auth\.2901000161\.workers\.dev/.test(String(d.sync.proxy||''))) d.sync.proxy=DEFAULT_PROXY; }catch(e){}
-    return d;
-  }catch(e){ storageOK=false; return emptyDB(); }
+    raw=localStorage.getItem(KEY);
+  }catch(e){
+    storageOK=false;
+    STORAGE_DIAG='浏览器拒绝读取本地存储（'+e.name+'）';
+    return emptyDB();
+  }
+  if(!raw) return emptyDB();
+  let d=null;
+  try{
+    d=JSON.parse(raw);
+  }catch(e){
+    storageOK=false;
+    try{
+      BROKEN_KEY=KEY+'.broken.'+Date.now();
+      localStorage.setItem(BROKEN_KEY,raw);
+    }catch(_){}
+    STORAGE_DIAG='本地数据损坏，无法解析（'+String(e.message).slice(0,60)+'），原始数据已另存为 '+BROKEN_KEY;
+    return emptyDB();
+  }
+  if(!d||!Array.isArray(d.entries)||!Array.isArray(d.nodes)){
+    storageOK=false;
+    STORAGE_DIAG='本地数据结构不对（缺少 entries/nodes）';
+    return emptyDB();
+  }
+  d=stripDemo(d);
+  try{ if(d.sync&&/story-desk-auth\.2901000161\.workers\.dev/.test(String(d.sync.proxy||''))) d.sync.proxy=DEFAULT_PROXY; }catch(e){}
+  return d;
 }
 function persist(){
-  try{ localStorage.setItem(KEY,JSON.stringify(DB)); lastSave=now(); paintSaved(); }
-  catch(e){ storageOK=false; warn('保存失败：'+e.message+'（请导出备份）'); }
+  let s='';
+  try{
+    s=JSON.stringify(DB);
+    localStorage.setItem(KEY,s); lastSave=now(); paintSaved();
+  }catch(e){
+    storageOK=false;
+    const mb=(s.length/1048576).toFixed(2);
+    const quota=(e&&(e.name==='QuotaExceededError'||e.code===22));
+    STORAGE_DIAG=quota
+      ?('存储空间不足：当前数据 '+mb+' MB，浏览器上限约 5 MB。图片和版本最占地方。')
+      :('写入失败（'+(e&&e.name||'错误')+'）：'+mb+' MB');
+    warn(STORAGE_DIAG+' 请立刻「导出 JSON」备份。');
+  }
   try{ bkMaybe(); }catch(e){}
 }
 function touch(){ if(saveTimer) clearTimeout(saveTimer); saveTimer=setTimeout(persist,600); const el=$('#saved'); if(el&&storageOK) el.textContent='…'; }
@@ -780,11 +813,46 @@ function idbCheck(){
     }catch(e){ if(!done){ done=true; clearTimeout(timer); res(false); } }
   });
 }
+function vRebuildIndex(){
+  return new Promise((res)=>{
+    try{
+      idbOpen().then(db=>{
+        const out=[];
+        try{
+          const req=db.transaction('versions','readonly').objectStore('versions').openCursor();
+          req.onsuccess=()=>{
+            const c=req.result;
+            if(!c){ res(out); return; }
+            const id=String(c.key);
+            const m=/^([am])(\d+)/.exec(id);
+            const kind=(m&&m[1]==='a')?'auto':'manual';
+            const ts=(m&&kind==='auto')?+m[2]:0;
+            out.push({id:id,kind:kind,n:(m&&kind==='manual')?+m[2]:null,at:ts,label:'',
+              words:0,chapters:0,bytes:(typeof c.value==='string'?c.value.length:0)});
+            c.continue();
+          };
+          req.onerror=()=>res(out);
+        }catch(e){ res(out); }
+      }).catch(()=>res([]));
+    }catch(e){ res([]); }
+  });
+}
 function vLoad(){
   return idbCheck().then(ok=>{
     IDB_OK=ok;
-    return ok?vMigrate().then(()=>{ vmeta(); }):null;
-  }).then(()=>{ vmeta(); });
+    return ok?vMigrate():null;
+  }).then(()=>{
+    vmeta();
+    if(IDB_OK&&vmeta().length===0){
+      return vRebuildIndex().then(list=>{
+        if(list.length){
+          VMETA=list.sort((a,b)=>(b.at||0)-(a.at||0));
+          vSaveIndex();
+        }
+      });
+    }
+    return null;
+  });
 }
 function vPrune(){
   // IDB 不可用时，靠 localStorage 索引里的 data 兜底，这里只做数量裁剪
@@ -5202,7 +5270,7 @@ function init(){
   try{
     if(DB.__cleaned||!localStorage.getItem(KEY)){ delete DB.__cleaned; persist(); }
   }catch(e){}
-  if(!storageOK) warn('浏览器禁用了本地存储：修改不会被保存，请用「导出 JSON」备份。');
+  if(!storageOK) warn((STORAGE_DIAG||'浏览器禁用了本地存储')+'：修改不会被保存，请用「导出 JSON」备份。');
   try{ if(typeof indexedDB!=='undefined') bkLoad().then(()=>{ paintBk(); bkMaybe(); });
     vLoad().then(()=>{ try{ render(); }catch(e){} }); }catch(e){}
 }
