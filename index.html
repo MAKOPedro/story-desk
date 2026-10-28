@@ -468,6 +468,9 @@ html[data-theme="night"]{--c-danger:#e0836f;--c-warn:#d9ab55;--c-ok:#86b394;--c-
 .fmtbar .dot{width:15px;height:15px;border-radius:50%;border:1px solid rgba(0,0,0,.15)}
 .fmtbar .sep{width:1px;height:18px;background:var(--line);margin:0 3px}
 @media print{.redact{background:#000!important;color:transparent!important}}
+.drawer-rich{min-height:56px;font-size:14px;line-height:1.85}
+.drawer-rich:empty::before{content:attr(data-ph);color:var(--dim2)}
+.drawer-rich .redact,.drawer-rich .fmt{font-size:inherit}
 </style>
 </head>
 <body>
@@ -909,52 +912,12 @@ function emptyBox(icon,title,sub,actLabel,actName){
 }
 
 /* ---------- 选区格式工具条 ---------- */
-function fmtUnwrap(el){
-  const p=el.parentNode; if(!p) return;
-  while(el.firstChild) p.insertBefore(el.firstChild,el);
-  p.removeChild(el);
-}
-function fmtInside(kind,val){
-  const sel=window.getSelection(); if(!sel||!sel.rangeCount) return null;
-  let n=sel.getRangeAt(0).commonAncestorContainer;
-  if(n.nodeType===3) n=n.parentNode;
-  const el=ceEl();
-  while(n&&n!==el){
-    if(n.nodeType===1&&n.dataset&&n.dataset[kind]===val) return n;
-    n=n.parentNode;
-  }
-  return null;
-}
-function fmtApply(kind,val){
-  const el=ceEl(); if(!el||!el.isContentEditable) return toast('先切到带方框的编辑模式');
-  const sel=window.getSelection(); if(!sel||!sel.rangeCount) return;
-  const r=sel.getRangeAt(0); if(r.collapsed) return toast('先选中一段文字');
-  const hit=fmtInside(kind,val);
-  if(hit){ fmtUnwrap(hit); syncCE(); hideFmtBar(); return; }
-  const frag=r.extractContents();
-  const span=document.createElement('span');
-  if(kind==='f'){ span.className='fmt'; span.dataset.f=val; span.setAttribute('style',fmtStyle(val)); }
-  else if(kind==='c'){ span.className='fmt'; span.dataset.c=val; span.setAttribute('style','color:'+colorCSS(val)); }
-  else { span.className='redact'; span.dataset.x=val||'soft'; }
-  span.appendChild(frag);
-  r.insertNode(span);
-  const r2=document.createRange(); r2.selectNodeContents(span);
-  sel.removeAllRanges(); sel.addRange(r2);
-  syncCE(); hideFmtBar();
-}
-function fmtClear(){
-  const el=ceEl(); if(!el) return;
-  const sel=window.getSelection(); if(!sel||!sel.rangeCount) return;
-  const r=sel.getRangeAt(0);
-  const all=Array.from(el.querySelectorAll('.fmt,.redact'));
-  let n=0;
-  all.forEach(x=>{ if(r.intersectsNode(x)){ fmtUnwrap(x); n++; } });
-  if(n){ syncCE(); hideFmtBar(); }
-}
+
 function showFmtBar(){
-  const el=ceEl(); if(!el||!el.isContentEditable) return hideFmtBar();
+  const el=activeRich();
+  if(!el) return hideFmtBar();
   const sel=window.getSelection();
-  if(!sel||!sel.rangeCount||sel.isCollapsed){ return hideFmtBar(); }
+  if(!sel||!sel.rangeCount||sel.isCollapsed) return hideFmtBar();
   const r=sel.getRangeAt(0);
   if(!el.contains(r.commonAncestorContainer)) return hideFmtBar();
   const rect=r.getBoundingClientRect();
@@ -1354,6 +1317,69 @@ function richHidden(text){
   }).join('');
   return walk(parseRich(text));
 }
+
+function activeRich(){
+  const a=document.activeElement;
+  if(a&&a.isContentEditable&&(a.id==='eText'||(a.classList&&a.classList.contains('drawer-rich')))) return a;
+  const el=ceEl();
+  return (el&&el.isContentEditable)?el:null;
+}
+function syncRich(el){
+  if(!el) return;
+  if(el.id==='eText'){ syncCE(); return; }
+  const ent=el.dataset?el.dataset.ent:null;
+  if(!ent) return;
+  const e=curEntry(); if(!e) return;
+  const v=ceToText(el);
+  if(ent==='body') e.body=v;
+  else {
+    const k=ent.indexOf(':')>=0?ent.slice(ent.indexOf(':')+1):ent;
+    e.fields=e.fields||{}; e.fields[k]=v;
+  }
+  e.updatedAt=now(); touch();
+}
+function fmtUnwrap(el){
+  const p=el.parentNode; if(!p) return;
+  while(el.firstChild) p.insertBefore(el.firstChild,el);
+  p.removeChild(el);
+}
+function fmtInside(kind,val,scope){
+  const sel=window.getSelection(); if(!sel||!sel.rangeCount) return null;
+  let n=sel.getRangeAt(0).commonAncestorContainer;
+  if(n.nodeType===3) n=n.parentNode;
+  while(n&&n!==scope){
+    if(n.nodeType===1&&n.dataset&&n.dataset[kind]===val) return n;
+    n=n.parentNode;
+  }
+  return null;
+}
+function fmtApply(kind,val){
+  const el=activeRich();
+  if(!el) return toast('先点进一个可编辑的区域');
+  const sel=window.getSelection(); if(!sel||!sel.rangeCount) return;
+  const r=sel.getRangeAt(0); if(r.collapsed) return toast('先选中一段文字');
+  const hit=fmtInside(kind,val,el);
+  if(hit){ fmtUnwrap(hit); syncRich(el); hideFmtBar(); return; }
+  const frag=r.extractContents();
+  const span=document.createElement('span');
+  if(kind==='f'){ span.className='fmt'; span.dataset.f=val; span.setAttribute('style',fmtStyle(val)); }
+  else if(kind==='c'){ span.className='fmt'; span.dataset.c=val; span.setAttribute('style','color:'+colorCSS(val)); }
+  else { span.className='redact'; span.dataset.x=val||'soft'; }
+  span.appendChild(frag);
+  r.insertNode(span);
+  const r2=document.createRange(); r2.selectNodeContents(span);
+  sel.removeAllRanges(); sel.addRange(r2);
+  syncRich(el); hideFmtBar();
+}
+function fmtClear(){
+  const el=activeRich(); if(!el) return;
+  const sel=window.getSelection(); if(!sel||!sel.rangeCount) return;
+  const r=sel.getRangeAt(0);
+  let n=0;
+  Array.from(el.querySelectorAll('.fmt,.redact')).forEach(x=>{ if(r.intersectsNode(x)){ fmtUnwrap(x); n++; } });
+  if(n){ syncRich(el); hideFmtBar(); }
+}
+
 function richHTML(text,opts){
   const o=opts||{};
   const img=n=>{
@@ -2708,10 +2734,10 @@ function libBoardView(){
 }
 function entryExcerpt(e){
   const keys=(ET[e.type]||{fields:[]}).fields.map(f=>f[0]);
-  for(const k of keys){ const v=e.fields[k]; if(v&&String(v).trim()) return v; }
+  for(const k of keys){ const v=e.fields[k]; if(v&&String(v).trim()) return richPlain(String(v)); }
   const ks=Object.keys(e.fields||{});
-  for(const k of ks){ const v=e.fields[k]; if(v&&String(v).trim()) return v; }
-  return e.body||'';
+  for(const k of ks){ const v=e.fields[k]; if(v&&String(v).trim()) return richPlain(String(v)); }
+  return richPlain(String(e.body||''));
 }
 function entryCard(e){
   const T=ET[e.type];
@@ -2756,12 +2782,14 @@ function drawerHTML(e){
   h+='<h5>设定</h5>';
   (T.fields||[]).forEach(f=>{
     const k=f[0],kind=f[1];
+    const val=(e.fields&&e.fields[k])||'';
     h+='<label class="f"><span>'+esc(k)+'</span>'
-      +(kind==='text'?'<input type="text" data-bind="entry.fields.'+k+'" value="'+esc(e.fields[k]||'')+'">'
-                     :'<textarea data-bind="entry.fields.'+k+'" rows="2">'+esc(e.fields[k]||'')+'</textarea>')
+      +(kind==='text'
+        ?'<input type="text" data-bind="entry.fields.'+k+'" value="'+esc(val)+'">'
+        :'<div class="prose edit drawer-rich" contenteditable="true" data-ent="fields:'+esc(k)+'" data-ph="写点什么…">'+nodesToCE(parseRich(val))+'</div>')
       +'</label>';
   });
-  h+='<h5>自由文本</h5><label class="f"><textarea data-bind="entry.body" rows="4" placeholder="补充、引用、待办…">'+esc(e.body||'')+'</textarea></label>';
+  h+='<h5>自由文本</h5><div class="prose edit drawer-rich" contenteditable="true" data-ent="body" data-ph="补充、引用、待办…">'+nodesToCE(parseRich(e.body||''))+'</div>';
   const apps=appearancesOf(e);
   h+='<h5>出现在（'+apps.length+'）</h5>';
   h+=apps.length?apps.slice(0,12).map(a=>{
@@ -4645,8 +4673,8 @@ function toMarkdown(){
     list.forEach(e=>{
       L.push('#### '+e.title+(e.status==='canon'?'　（正典）':''));
       if((e.alias||[]).length) L.push('又名：'+e.alias.join('、'));
-      (ET[k].fields||[]).forEach(f=>{ const v=e.fields[f[0]]; if(v&&String(v).trim()) L.push('- **'+f[0]+'**：'+String(v).replace(/\n/g,'\n  ')); });
-      if(e.body) L.push('',e.body);
+      (ET[k].fields||[]).forEach(f=>{ const v=e.fields[f[0]]; if(v&&String(v).trim()) L.push('- **'+f[0]+'**：'+mdText(String(v)).replace(/\n/g,'\n  ')); });
+      if(e.body) L.push('',mdText(e.body));
       L.push('');
     });
   });
@@ -4855,6 +4883,7 @@ document.addEventListener('drop',e=>{
 
 document.addEventListener('input',e=>{
   const tg=e.target;
+  if(tg.classList&&tg.classList.contains('drawer-rich')){ syncRich(tg); return; }
   if(tg.id==='eText'&&tg.isContentEditable){ if(!COMPOSING) syncCE(); return; }
   if(tg.id==='refQ'){ REFQ=tg.value; paintRef(); return; }
   if(tg.id==='frQ'){ frPaint(); return; }
