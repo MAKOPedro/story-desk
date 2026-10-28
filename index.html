@@ -482,6 +482,8 @@ html[data-theme="night"]{--c-danger:#e0836f;--c-warn:#d9ab55;--c-ok:#86b394;--c-
 .lrow .caret{width:11px;flex:none;color:var(--dim2);font-size:10px;text-align:center}
 .lrow .t{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .lrow em{font-style:normal;color:var(--dim2);font-size:11px;flex:none}
+.lrow.fld{color:var(--ink);font-weight:500}
+.lrow.fld .t{color:var(--ink)}
 </style>
 </head>
 <body>
@@ -718,6 +720,19 @@ function load(){
     return emptyDB();
   }
   d=stripDemo(d);
+    try{
+      if(!Array.isArray(d.folders)) d.folders=[];
+      const _p={};
+      (d.entries||[]).forEach(function(e){ if(e&&e.parentId) _p[e.parentId]=1; });
+      Object.keys(_p).forEach(function(pid){
+        const pe=(d.entries||[]).find(function(x){ return x.id===pid; });
+        const nm=(pe&&pe.title)||"分组";
+        let fd=d.folders.find(function(x){ return x.name===nm; });
+        if(!fd){ fd={id:"f_"+Math.random().toString(36).slice(2,9),name:nm,createdAt:Date.now()}; d.folders.push(fd); }
+        (d.entries||[]).forEach(function(e){ if(e&&e.parentId===pid) e.folderId=fd.id; });
+      });
+      (d.entries||[]).forEach(function(e){ if(e){ delete e.parentId; if(e.folderId===undefined) e.folderId=null; } });
+    }catch(e){}
   try{ if(d.sync&&/story-desk-auth\.2901000161\.workers\.dev/.test(String(d.sync.proxy||''))) d.sync.proxy=DEFAULT_PROXY; }catch(e){}
   return d;
 }
@@ -968,6 +983,7 @@ async function restoreVersion(id){
   if(!Array.isArray(DB.plan.frames)) DB.plan.frames=[];
   if(!Array.isArray(DB.plan.stickers)) DB.plan.stickers=[];
   if(!Array.isArray(DB.refs)) DB.refs=[];
+  if(!Array.isArray(DB.folders)) DB.folders=[];
   DB.ui=Object.assign({tab:'write',nodeId:null,entryId:null,charId:null,dlgId:null,questId:null,charBoard:false,libBoard:false,itemSrv:'',itemSel:null,itemQ:'',theme:'paper',filter:'',q:'',preview:false,zen:false,sub:'outline'},DB.ui||{});
   if(!DB.sync) DB.sync={};
   if(vKind(v)==='manual') DB.sync.lastVersion=v.n;
@@ -2367,14 +2383,27 @@ document.addEventListener('dblclick',function(e){
 });
 document.addEventListener('contextmenu',function(e){
   if(!e.target.closest) return;
-  const lr=e.target.closest('.lrow');
+  const fr=e.target.closest('[data-folder]');
+  if(fr&&fr.dataset.folder!=='__none__'){
+    const f=(DB.folders||[]).find(x=>x.id===fr.dataset.folder);
+    if(f){
+      e.preventDefault();
+      openCtx(e.clientX,e.clientY,[
+        {head:esc(f.name||'文件夹')},
+        {act:'renameFolder',icon:'✎',label:'重命名',id:f.id},
+        {act:'delFolder',icon:'✕',label:'删除文件夹',id:f.id}
+      ]);
+      return;
+    }
+  }
+  const lr=e.target.closest('[data-drag]');
   if(lr){
     const en=DB.entries.find(x=>x.id===lr.dataset.id);
-    if(en&&en.parentId){
+    if(en&&en.folderId){
       e.preventDefault();
       openCtx(e.clientX,e.clientY,[
         {head:esc(en.title||'未命名')},
-        {act:'libMoveOut',icon:'↩',label:'移出分组',v:en.id,id:en.id}
+        {act:'libMoveOut',icon:'↩',label:'移出文件夹',id:en.id}
       ]);
       return;
     }
@@ -2848,9 +2877,10 @@ function questDrawerHTML(q){
 function viewLib(){
   if(DB.ui.libBoard) return libBoardView();
   const f=DB.ui.filter||'', q=(DB.ui.q||'').toLowerCase();
-  const par=DB.ui.libParent||'';
+  const par=DB.ui.libFolder||'';
   let list=DB.entries.slice();
-  if(par) list=list.filter(e=>e.id===par||e.parentId===par);
+  if(par==='__none__') list=list.filter(e=>!e.folderId);
+  else if(par) list=list.filter(e=>e.folderId===par);
   if(f) list=list.filter(e=>e.type===f);
   if(q) list=list.filter(e=>((e.title||'')+' '+(e.body||'')+' '+(e.alias||[]).join(' ')+' '+JSON.stringify(e.fields||{})).toLowerCase().indexOf(q)>=0);
   list.sort((a,b)=>(b.updatedAt||0)-(a.updatedAt||0));
@@ -2863,25 +2893,27 @@ function viewLib(){
   });
   {
     const col=DB.ui.libCollapsed||[];
-    const kidsOf=id=>DB.entries.filter(e=>e.parentId===id);
-    const row=(e,d)=>{
-      const kids=kidsOf(e.id);
-      const closed=col.indexOf(e.id)>=0;
-      let s='<div class="lrow'+(par===e.id?' on':'')+'" data-act="libPick" data-id="'+e.id+'" draggable="true" data-drag="'+e.id+'" style="padding-left:'+(8+d*12)+'px">'
-        +(kids.length
-          ?('<span class="caret" data-act="libToggle" data-id="'+e.id+'">'+(closed?'▸':'▾')+'</span>')
-          :'<span class="caret" style="visibility:hidden">·</span>')
-        +'<span class="t">'+esc(e.title||'未命名')+'</span>'
-        +(kids.length?('<em>'+kids.length+'</em>'):'')
-        +'</div>';
-      if(kids.length&&!closed) kids.forEach(k=>{ s+=row(k,d+1); });
-      return s;
+    const folders=DB.folders||[];
+    const inFolder=id=>DB.entries.filter(e=>e.folderId===id);
+    const noneList=DB.entries.filter(e=>!e.folderId);
+    const erow=e=>'<div class="lrow'+(DB.ui.entryId===e.id?' on':'')+'" data-drag="'+e.id+'" data-act="libPick" data-id="'+e.id+'" draggable="true" style="padding-left:26px">'
+      +'<span class="caret" style="visibility:hidden">·</span>'
+      +'<span class="t">'+esc(e.title||'未命名')+'</span></div>';
+    const frow=f=>{
+      const kids=inFolder(f.id);
+      const closed=col.indexOf(f.id)>=0;
+      return '<div class="lrow fld'+(par===f.id?' on':'')+'" data-folder="'+f.id+'" data-act="libFolderPick" data-id="'+f.id+'">'
+        +'<span class="caret" data-act="libToggle" data-id="'+f.id+'">'+(kids.length?(closed?'▸':'▾'):'·')+'</span>'
+        +'<span class="t">'+esc(f.name||'文件夹')+'</span>'
+        +'<em>'+(kids.length||0)+'</em></div>'
+        +(closed?'':kids.map(erow).join(''));
     };
-    h+='<h4 style="margin-top:16px;display:flex;align-items:center">分组'
-      +'<button class="btn sm ghost" data-act="addGroup" title="新建一个父词条" style="margin-left:auto;padding:0 6px;height:20px;line-height:1">＋</button></h4>';
-    h+='<div class="rit'+(par?'':' on')+'" data-act="libParent" data-v="">全部<em>'+DB.entries.length+'</em></div>';
-    const roots=DB.entries.filter(e=>!e.parentId);
-    h+=roots.map(e=>row(e,0)).join('')||'<div class="hint" style="padding:6px 8px">还没有词条</div>';
+    h+='<h4 style="margin-top:16px;display:flex;align-items:center">文件夹'
+      +'<button class="btn sm ghost" data-act="addFolder" title="新建文件夹" style="margin-left:auto;padding:0 6px;height:20px;line-height:1">＋</button></h4>';
+    h+='<div class="rit'+(par?'':' on')+'" data-act="libFolderPick" data-id="">全部<em>'+DB.entries.length+'</em></div>';
+    h+=(DB.folders||[]).map(frow).join('');
+    h+='<div class="lrow'+(par==='__none__'?' on':'')+'" data-folder="__none__" data-act="libFolderPick" data-id="__none__">'
+      +'<span class="caret" style="visibility:hidden">·</span><span class="t" style="color:var(--dim)">未分组</span><em>'+noneList.length+'</em></div>';
   }
   h+='</aside><div class="libmain"><div class="libbar">'
     +'<input type="search" data-bind="ui.q" value="'+esc(DB.ui.q||'')+'" placeholder="搜索设定…" style="max-width:360px">'
@@ -2922,7 +2954,7 @@ function entryCard(e){
     +(e.status==='canon'?'<span class="chip canon">正典</span>':e.status==='cut'?'<span class="chip cut">废弃</span>':'')
     +'</div>'
     +'<div class="x">'+esc(clip(entryExcerpt(e),64)||'—')+'</div>'
-    +'<div class="f">'+(function(){ const pe=e.parentId?DB.entries.find(x=>x.id===e.parentId):null; return pe?'<span class="chip">↳ '+esc(pe.title||'')+'</span> ':''; })()+'<span class="chip">'+T.label+'</span>'
+    +'<div class="f">'+(function(){ const fd=e.folderId?(DB.folders||[]).find(x=>x.id===e.folderId):null; return fd?'<span class="chip">📁 '+esc(fd.name||'')+'</span> ':''; })()+'<span class="chip">'+T.label+'</span>'
     +((e.alias||[]).length?'<span class="chip">又名 '+(e.alias||[]).length+'</span>':'')
     +(rc?'<span class="chip">出现 '+rc+' 章</span>':'')
     +'</div></div>';
@@ -2955,20 +2987,11 @@ function drawerHTML(e){
   h+='<label class="f"><span>名称</span><input type="text" data-bind="entry.title" value="'+esc(e.title)+'" style="font-family:var(--serif);font-size:17px"></label>';
   h+='<label class="f"><span>又名 / 别称（逗号分隔，正文里提到也算）</span><input type="text" data-bind="entry.alias" value="'+esc((e.alias||[]).join('，'))+'"></label>';
   {
-    const opts=DB.entries.filter(x=>x.id!==e.id);
-    const kids=DB.entries.filter(x=>x.parentId===e.id);
-    h+='<label class="f"><span>归到哪个词条下（把相关设定收进同一个词条）</span><select data-act="setParent">'
+    const fs2=DB.folders||[];
+    h+='<label class="f"><span>所属文件夹（用来归类，不是词条）</span><select data-act="setFolder">'
       +'<option value="">（不归类）</option>'
-      +opts.map(x=>'<option value="'+x.id+'"'+(e.parentId===x.id?' selected':'')+'>'+(x.type?(ET[x.type].label+' · '):'')+esc(x.title||'未命名')+'</option>').join('')
+      +fs2.map(x=>'<option value="'+x.id+'"'+(e.folderId===x.id?' selected':'')+'>'+esc(x.name||'文件夹')+'</option>').join('')
       +'</select></label>';
-    h+='<h5>包含的设定（'+kids.length+'）</h5>';
-    h+=kids.length
-      ? kids.map(k=>'<div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px dashed var(--line)">'
-          +'<span class="mini" style="width:44px;flex:none">'+ET[k.type].label+'</span>'
-          +'<b style="flex:1;cursor:pointer;font-size:12.5px" data-act="openEntry" data-id="'+k.id+'">'+esc(k.title||'未命名')+'</b>'
-          +'<button class="btn sm ghost" data-act="detachChild" data-id="'+k.id+'" title="移出">移出</button></div>').join('')
-      : '<div class="hint">还没有。相关的人物、地点、名词都可以放进来。</div>';
-    h+='<div style="margin:6px 0 14px"><button class="btn sm" data-act="addChild">＋ 子设定</button></div>';
   }
   h+='<h5>设定</h5>';
   (T.fields||[]).forEach(f=>{
@@ -4212,11 +4235,12 @@ const ACT={
     if(i>=0) q.charIds.splice(i,1); else q.charIds.push(id);
     q.updatedAt=now(); touch(); renderDrawer();
   },
-  libParent(el){ DB.ui.libParent=el.dataset.v||''; render(); },
+  libFolderPick(el){ DB.ui.libFolder=el.dataset.id||''; DB.ui.libParent=''; render(); },
   libPick(el){
     const id=el.dataset.id;
-    DB.ui.libParent=id;
     DB.ui.entryId=id;
+    const en=DB.entries.find(x=>x.id===id);
+    DB.ui.libFolder=en?(en.folderId||'__none__'):'';
     render();
   },
   libToggle(el){
@@ -4226,41 +4250,48 @@ const ACT={
     if(i>=0) arr.splice(i,1); else arr.push(id);
     render();
   },
-  addGroup(){
-    const en=blankEntry('term');
-    en.title='新分组';
-    DB.entries.push(en);
-    DB.ui.tab='lib'; DB.ui.entryId=en.id; DB.ui.libParent='';
+  async addFolder(){
+    const nm=await uiPrompt('新文件夹的名字','新文件夹');
+    if(nm===null||nm===undefined) return;
+    const name=String(nm).trim();
+    if(!name) return;
+    DB.folders=DB.folders||[];
+    const f={id:'f_'+Math.random().toString(36).slice(2,9),name:name,createdAt:now()};
+    DB.folders.push(f);
+    DB.ui.libFolder=f.id;
     touch(); render();
-    setTimeout(()=>{ const x=$('#drawer input[data-bind="entry.title"]'); if(x){ x.focus(); x.select(); } },60);
+    toast('已建文件夹「'+name+'」');
+  },
+  async renameFolder(el){
+    const f=(DB.folders||[]).find(x=>x.id===el.dataset.id);
+    if(!f) return;
+    const nm=await uiPrompt('文件夹名字',f.name||'');
+    if(nm===null||nm===undefined) return;
+    const name=String(nm).trim();
+    if(!name) return;
+    f.name=name; touch(); render();
+  },
+  async delFolder(el){
+    const f=(DB.folders||[]).find(x=>x.id===el.dataset.id);
+    if(!f) return;
+    const n=DB.entries.filter(e=>e.folderId===f.id).length;
+    if(!await uiConfirm('删掉文件夹「'+f.name+'」？里面的 '+n+' 个词条会回到「未分组」，不会被删。')) return;
+    DB.entries.forEach(e=>{ if(e.folderId===f.id) e.folderId=null; });
+    DB.folders=DB.folders.filter(x=>x.id!==f.id);
+    if(DB.ui.libFolder===f.id) DB.ui.libFolder='';
+    touch(); render();
+    toast('已删除文件夹');
   },
   libMoveOut(el){
     const e=DB.entries.find(x=>x.id===el.dataset.id);
     if(!e) return;
-    e.parentId=null; e.updatedAt=now(); touch(); render();
-    toast('已移出分组');
+    e.folderId=null; e.updatedAt=now(); touch(); render();
+    toast('已移出文件夹');
   },
-  detachChild(el){ const k=DB.entries.find(x=>x.id===el.dataset.id); if(!k) return; k.parentId=null; k.updatedAt=now(); touch(); render(); },
-  addChild(){
-    const p=curEntry(); if(!p) return;
-    const en=blankEntry(p.type);
-    en.title='新设定'; en.parentId=p.id;
-    DB.entries.push(en);
-    DB.ui.entryId=en.id; touch(); render();
-    setTimeout(()=>{ const x=$('#drawer input[data-bind="entry.title"]'); if(x){ x.focus(); x.select(); } },60);
-  },
-  setParent(el){
+  setFolder(el){
     const e=curEntry(); if(!e) return;
-    const id=el.value||'';
-    if(id){
-      let cur=DB.entries.find(x=>x.id===id), guard=0;
-      while(cur&&guard++<30){
-        if(cur.id===e.id){ el.value=e.parentId||''; return toast('不能归到自己或自己的子项下'); }
-        cur=cur.parentId?DB.entries.find(x=>x.id===cur.parentId):null;
-      }
-    }
-    e.parentId=id||null; e.updatedAt=now(); touch(); render();
-    toast(id?'已归类':'已移出归类');
+    e.folderId=el.value||null; e.updatedAt=now(); touch(); render();
+    toast(el.value?'已归类':'已移出文件夹');
   },
   async saveVer(){
     const list=versions();
@@ -5028,24 +5059,19 @@ document.addEventListener('dragleave',function(e){
 });
 document.addEventListener('drop',function(e){
   if(!DRAGLID) return;
-  const r=e.target&&e.target.closest?e.target.closest('.lrow'):null;
+  const r=e.target&&e.target.closest?e.target.closest('[data-folder]'):null;
   document.querySelectorAll('.lrow.over').forEach(x=>x.classList.remove('over'));
   const id=DRAGLID; DRAGLID=null;
   if(!r) return;
   e.preventDefault();
-  const target=r.dataset.id;
-  if(!target||target===id) return;
+  const fid=r.dataset.folder;
   const child=DB.entries.find(x=>x.id===id);
   if(!child) return;
-  let cur=DB.entries.find(x=>x.id===target), guard=0;
-  while(cur&&guard++<30){
-    if(cur.id===id){ toast('不能放进自己的子项里'); return; }
-    cur=cur.parentId?DB.entries.find(x=>x.id===cur.parentId):null;
-  }
-  child.parentId=target;
+  child.folderId=(fid&&fid!=='__none__')?fid:null;
   child.updatedAt=now();
   touch(); render();
-  toast('已移入「'+((DB.entries.find(x=>x.id===target)||{}).title||'')+'」');
+  const fn=fid&&fid!=='__none__'?((DB.folders||[]).find(x=>x.id===fid)||{}).name:'未分组';
+  toast('已移入「'+(fn||'')+'」');
 });
 document.addEventListener('click',e=>{
   const el=e.target.closest('[data-act]');
@@ -5273,7 +5299,7 @@ document.addEventListener('change',e=>{
   if(rt){ render(); return; }
   const el=e.target;
   if(el.id==='ghToken'){ setToken(String(el.value||'').trim()); toast(el.value?'Token 已保存':'Token 已清除'); return; }
-  if(el.dataset&&el.dataset.act==='setParent'){ ACT.setParent(el); return; }
+  if(el.dataset&&el.dataset.act==='setFolder'){ ACT.setFolder(el); return; }
   if(el.dataset&&el.dataset.evch){
     const ev=(DB.events||[]).find(x=>x.id===el.dataset.evch);
     if(ev){ ev.chapterId=el.value; touch(); }
@@ -5408,7 +5434,7 @@ function fixEntry(e){
   if(!e.fields||typeof e.fields!=='object'||Array.isArray(e.fields)) e.fields={};
   if(typeof e.title!=='string') e.title='';
   if(typeof e.body!=='string') e.body='';
-  if(e.parentId!=null&&typeof e.parentId!=='string') e.parentId=null;
+  if(e.folderId!=null&&typeof e.folderId!=='string') e.folderId=null;
   e.updatedAt=e.updatedAt||now(); e.createdAt=e.createdAt||e.updatedAt;
   return e;
 }
