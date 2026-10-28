@@ -453,9 +453,25 @@ button,.btn,.nav button,.rit,.rfitem,.pcard,.mnode,.trow,.pitem,.rfkind,.rftag,.
   .prose.edit,.preview{min-height:0}
   .pimg{max-width:70%;break-inside:avoid}
 }
+
+:root{--c-danger:#a33a2c;--c-warn:#a1742c;--c-ok:#3f6b52;--c-info:#3c5a8a;--c-mute:#8a8378}
+html[data-theme="night"]{--c-danger:#e0836f;--c-warn:#d9ab55;--c-ok:#86b394;--c-info:#8aa8d8;--c-mute:#9a9384}
+.redact{background:var(--ink);color:transparent;border-radius:2px;padding:0 2px;cursor:pointer}
+.redact.reveal{background:var(--sel);color:var(--ink);box-shadow:inset 0 -1px 0 var(--accent)}
+.preview.rich{white-space:pre-wrap;word-break:break-word}
+.fmtbar{position:fixed;z-index:10060;display:none;align-items:center;gap:2px;padding:5px;
+  background:var(--panel);border:1px solid var(--line2);border-radius:9px;box-shadow:0 10px 28px #3a2a1226}
+.fmtbar.on{display:flex}
+.fmtbar button{width:28px;height:28px;border:1px solid transparent;border-radius:6px;background:none;cursor:pointer;
+  color:var(--ink);font-size:13px;line-height:1;display:flex;align-items:center;justify-content:center}
+.fmtbar button:hover{background:var(--hover);border-color:var(--line2)}
+.fmtbar .dot{width:15px;height:15px;border-radius:50%;border:1px solid rgba(0,0,0,.15)}
+.fmtbar .sep{width:1px;height:18px;background:var(--line);margin:0 3px}
+@media print{.redact{background:#000!important;color:transparent!important}}
 </style>
 </head>
 <body>
+<div id="fmtbar" class="fmtbar"></div>
 <header class="top" style="position:relative"><div class="topbar-prog"><i id="progbar" style="width:0%"></i></div>
   <div class="logo">创作台</div>
   <div class="ptitle" id="ptitle" data-act="rename">未命名</div>
@@ -509,7 +525,7 @@ const now=()=>Date.now();
 const dt=t=>{if(!t)return '—';const d=new Date(t),p=n=>String(n).padStart(2,'0');return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+' '+p(d.getHours())+':'+p(d.getMinutes());};
 const today=()=>dt(now()).slice(0,10);
 const clip=(s,n)=>{s=String(s||'').replace(/\s+/g,' ').trim();return s.length>n?s.slice(0,n)+'…':s;};
-const chars=s=>String(s||'').replace(/\[\[|\]\]/g,'').replace(/\s/g,'').length;
+const chars=s=>String(richPlain(s)).replace(/\s/g,'').length;
 
 /* ---------- 头像 ---------- */
 const AV_ICONS=['🕵️','🧑‍🎤','👤','🧙','🧛','🧟','👻','💀','🦌','🐦','🕯️','📻','🔪','🗝️','🪞','🚪','🌫️','🩸','🦷','🐍','🕷️','🦋','🌘','👁️','🧵','⚰️','🪦','🔥','💧','📼','📷','🪟','🧊','🌾','🐺','🦉','🎭','🃏','🎼','⏳'];
@@ -575,7 +591,8 @@ function keyTerms(){
 }
 function mentions(text){
   const res=[];
-  keyTerms().forEach(t=>{ if(t.k && String(text||'').indexOf(t.k)>=0) res.push(t); });
+  const plain=richPlain(text);
+  keyTerms().forEach(t=>{ if(t.k && plain.indexOf(t.k)>=0) res.push(t); });
   return res;
 }
 function refs(text){
@@ -890,6 +907,109 @@ function emptyBox(icon,title,sub,actLabel,actName){
     +(actLabel?('<button class="btn primary" data-act="'+actName+'">'+esc(actLabel)+'</button>'):'')
     +'</div>';
 }
+
+/* ---------- 选区格式工具条 ---------- */
+function fmtUnwrap(el){
+  const p=el.parentNode; if(!p) return;
+  while(el.firstChild) p.insertBefore(el.firstChild,el);
+  p.removeChild(el);
+}
+function fmtInside(kind,val){
+  const sel=window.getSelection(); if(!sel||!sel.rangeCount) return null;
+  let n=sel.getRangeAt(0).commonAncestorContainer;
+  if(n.nodeType===3) n=n.parentNode;
+  const el=ceEl();
+  while(n&&n!==el){
+    if(n.nodeType===1&&n.dataset&&n.dataset[kind]===val) return n;
+    n=n.parentNode;
+  }
+  return null;
+}
+function fmtApply(kind,val){
+  const el=ceEl(); if(!el||!el.isContentEditable) return toast('先切到带方框的编辑模式');
+  const sel=window.getSelection(); if(!sel||!sel.rangeCount) return;
+  const r=sel.getRangeAt(0); if(r.collapsed) return toast('先选中一段文字');
+  const hit=fmtInside(kind,val);
+  if(hit){ fmtUnwrap(hit); syncCE(); hideFmtBar(); return; }
+  const frag=r.extractContents();
+  const span=document.createElement('span');
+  if(kind==='f'){ span.className='fmt'; span.dataset.f=val; span.setAttribute('style',fmtStyle(val)); }
+  else if(kind==='c'){ span.className='fmt'; span.dataset.c=val; span.setAttribute('style','color:'+colorCSS(val)); }
+  else { span.className='redact'; span.dataset.x=val||'soft'; }
+  span.appendChild(frag);
+  r.insertNode(span);
+  const r2=document.createRange(); r2.selectNodeContents(span);
+  sel.removeAllRanges(); sel.addRange(r2);
+  syncCE(); hideFmtBar();
+}
+function fmtClear(){
+  const el=ceEl(); if(!el) return;
+  const sel=window.getSelection(); if(!sel||!sel.rangeCount) return;
+  const r=sel.getRangeAt(0);
+  const all=Array.from(el.querySelectorAll('.fmt,.redact'));
+  let n=0;
+  all.forEach(x=>{ if(r.intersectsNode(x)){ fmtUnwrap(x); n++; } });
+  if(n){ syncCE(); hideFmtBar(); }
+}
+function showFmtBar(){
+  const el=ceEl(); if(!el||!el.isContentEditable) return hideFmtBar();
+  const sel=window.getSelection();
+  if(!sel||!sel.rangeCount||sel.isCollapsed){ return hideFmtBar(); }
+  const r=sel.getRangeAt(0);
+  if(!el.contains(r.commonAncestorContainer)) return hideFmtBar();
+  const rect=r.getBoundingClientRect();
+  if(!rect||(!rect.width&&!rect.height)) return hideFmtBar();
+  const bar=document.getElementById('fmtbar');
+  if(!bar) return;
+  bar.innerHTML=''
+    +'<button data-act="fmtB" title="加粗 Ctrl+B"><b>B</b></button>'
+    +'<button data-act="fmtI" title="斜体 Ctrl+I"><i>I</i></button>'
+    +'<span class="sep"></span>'
+    +FMT_NAMES.map(k=>'<button data-act="fmtColor" data-v="'+k+'" title="'+k+'"><span class="dot" style="background:var(--c-'+k+')"></span></button>').join('')
+    +'<span class="sep"></span>'
+    +'<button data-act="fmtRedact" title="涂黑 Ctrl+Shift+X">█</button>'
+    +'<button data-act="fmtClear" title="清除格式">⌫</button>';
+  bar.classList.add('on');
+  const bw=bar.offsetWidth||260, bh=bar.offsetHeight||38;
+  let x=rect.left+rect.width/2-bw/2;
+  let y=rect.top-bh-8;
+  if(y<8) y=rect.bottom+8;
+  x=Math.max(8,Math.min(x,window.innerWidth-bw-8));
+  bar.style.left=x+'px'; bar.style.top=y+'px';
+}
+function hideFmtBar(){
+  const bar=document.getElementById('fmtbar');
+  if(bar) bar.classList.remove('on');
+}
+let FMT_T=null;
+document.addEventListener('selectionchange',()=>{
+  if(FMT_T) clearTimeout(FMT_T);
+  FMT_T=setTimeout(()=>{ try{ showFmtBar(); }catch(e){} },120);
+});
+document.addEventListener('scroll',hideFmtBar,true);
+document.addEventListener('keydown',function(e){
+  const el=ceEl();
+  if(!el||!el.isContentEditable) return;
+  const tgt=e.target;
+  if(!tgt||!el.contains(tgt)) return;
+  if(e.ctrlKey||e.metaKey){
+    const k=e.key.toLowerCase();
+    if(k==='b'){ e.preventDefault(); fmtApply('f','b'); return; }
+    if(k==='i'){ e.preventDefault(); fmtApply('f','i'); return; }
+    if(k==='x'&&e.shiftKey){ e.preventDefault(); fmtApply('x','soft'); return; }
+  }
+});
+document.addEventListener('mousedown',function(e){
+  const rd=e.target&&e.target.closest?e.target.closest('.redact'):null;
+  if(!rd) return;
+  e.preventDefault(); e.stopPropagation();
+  rd.classList.toggle('reveal');
+  if(typeof syncCE==='function'){
+    const n=curNode();
+    if(n&&ceEl()&&ceEl().isContentEditable){ /* 仅视觉切换，不改数据 */ }
+  }
+},true);
+
 function modal(title,body,foot,wide){
   $('#modal').innerHTML='<div class="mbox" style="'+(wide?'width:min(1000px,96vw)':'')+'"><div class="mh"><b>'+esc(title)+'</b></div><div class="mb">'+(body||'')+'</div><div class="mf">'+(foot||'<button class="btn" data-act="closeModal">关闭</button>')+'</div></div>';
   $('#modal').classList.add('on');
@@ -1158,16 +1278,138 @@ function addImageFile(file){
     toast('已插入图片 '+res.w+'×'+res.h+' · '+Math.round(res.size/1024)+' KB');
   });
 }
+
+/* ---------- 富文本记号 ---------- */
+const FMT_NAMES=['danger','warn','ok','info','mute'];
+function colorCSS(name){
+  if(!name) return '';
+  if(FMT_NAMES.indexOf(name)>=0) return 'var(--c-'+name+')';
+  if(/^#[0-9a-fA-F]{3,8}$/.test(name)) return name;
+  return '';
+}
+function fmtStyle(arg){
+  const fs=String(arg||'').split(',').map(x=>x.trim());
+  let st='';
+  if(fs.indexOf('b')>=0) st+='font-weight:700;';
+  if(fs.indexOf('i')>=0) st+='font-style:italic;';
+  if(fs.indexOf('u')>=0) st+='text-decoration:underline;';
+  if(fs.indexOf('s')>=0) st+='text-decoration:line-through;';
+  return st;
+}
+function richFindClose(s,i){
+  let depth=0;
+  for(let k=i;k<s.length-1;k++){
+    if(s[k]==='{'&&s[k+1]==='{'){ depth++; k++; continue; }
+    if(s[k]==='}'&&s[k+1]==='}'){ depth--; if(depth===0) return k+2; k++; continue; }
+  }
+  return -1;
+}
+function parseRich(text){
+  const s=String(text||'');
+  const out=[];
+  let i=0, buf='';
+  const flush=()=>{ if(buf){ out.push({t:'text',v:buf}); buf=''; } };
+  while(i<s.length){
+    if(s[i]==='['&&s[i+1]==='['){
+      const j=s.indexOf(']]',i+2);
+      if(j>0){ flush(); out.push({t:'ref',v:s.slice(i+2,j)}); i=j+2; continue; }
+    }
+    if(s[i]==='{'&&s[i+1]==='{'){
+      const end=richFindClose(s,i);
+      if(end>0){
+        const inner=s.slice(i+2,end-2);
+        const bar=inner.indexOf('|');
+        const head=bar>=0?inner.slice(0,bar):inner;
+        const body=bar>=0?inner.slice(bar+1):'';
+        const colon=head.indexOf(':');
+        const tag=colon>=0?head.slice(0,colon):head;
+        const arg=colon>=0?head.slice(colon+1):'';
+        if(tag==='img'&&bar<0){ flush(); out.push({t:'img',id:arg.trim()}); i=end; continue; }
+        if(bar>=0&&(tag==='f'||tag==='c'||tag==='x')){
+          flush();
+          out.push({t:'style',k:tag,arg:arg.trim(),kids:parseRich(body)});
+          i=end; continue;
+        }
+      }
+    }
+    buf+=s[i]; i++;
+  }
+  flush();
+  return out;
+}
+function richPlain(text){
+  const walk=ns=>ns.map(n=>{
+    if(n.t==='text') return n.v;
+    if(n.t==='ref') return n.v;
+    if(n.t==='img') return '';
+    return walk(n.kids);
+  }).join('');
+  return walk(parseRich(text));
+}
+function richHidden(text){
+  const walk=ns=>ns.map(n=>{
+    if(n.t==='style'&&n.k==='x') return walk(n.kids);
+    if(n.t==='style') return walk(n.kids);
+    return '';
+  }).join('');
+  return walk(parseRich(text));
+}
+function richHTML(text,opts){
+  const o=opts||{};
+  const img=n=>{
+    if(o.img==='ce') return ceImg(n.id);
+    const a=assetById(n.id);
+    return a?'<img class="pimg" src="'+a.dataUrl+'" alt="'+esc(a.name||'')+'" data-act="openImg" data-id="'+n.id+'">'
+      :'<span class="mini">［图片丢失］</span>';
+  };
+  const render=ns=>ns.map(n=>{
+    if(n.t==='text') return esc(n.v).replace(/\n/g,'<br>');
+    if(n.t==='ref') return '<span class="ref" data-act="jumpTitle" data-title="'+esc(n.v)+'">'+esc(n.v)+'</span>';
+    if(n.t==='img') return img(n);
+    const kids=render(n.kids);
+    if(n.k==='f') return '<span style="'+fmtStyle(n.arg)+'">'+kids+'</span>';
+    if(n.k==='c'){ const c=colorCSS(n.arg); return c?'<span style="color:'+c+'">'+kids+'</span>':kids; }
+    const show=o.revealAll||(n.arg!=='seal'&&o.revealSoft);
+    return '<span class="redact'+(show?' reveal':'')+'" data-x="'+esc(n.arg||'soft')+'">'+kids+'</span>';
+  }).join('');
+  return render(parseRich(text));
+}
+function nodesToCE(ns){
+  return ns.map(n=>{
+    if(n.t==='text') return esc(n.v).replace(/\n/g,'<br>');
+    if(n.t==='ref') return ceChip(n.v);
+    if(n.t==='img') return ceImg(n.id);
+    const kids=nodesToCE(n.kids);
+    if(n.k==='f') return '<span class="fmt" data-f="'+esc(n.arg)+'" style="'+fmtStyle(n.arg)+'">'+kids+'</span>';
+    if(n.k==='c') return '<span class="fmt" data-c="'+esc(n.arg)+'" style="color:'+esc(colorCSS(n.arg))+'">'+kids+'</span>';
+    const soft=(n.arg!=='seal');
+    const show=soft&&DB.ui.showRedacted;
+    return '<span class="redact'+(show?' reveal':'')+'" data-x="'+esc(n.arg||'soft')+'">'+kids+'</span>';
+  }).join('');
+}
+function richMarkdown(text){
+  const render=ns=>ns.map(n=>{
+    if(n.t==='text') return n.v;
+    if(n.t==='ref') return n.v;
+    if(n.t==='img'){ const a=assetById(n.id); return a?('\n\n!['+(a.name||'图')+']('+a.dataUrl+')\n\n'):''; }
+    const kids=render(n.kids);
+    if(n.k==='f'){
+      const fs=String(n.arg||'').split(',').map(x=>x.trim());
+      let s=kids;
+      if(fs.indexOf('i')>=0) s='*'+s+'*';
+      if(fs.indexOf('b')>=0) s='**'+s+'**';
+      if(fs.indexOf('s')>=0) s='~~'+s+'~~';
+      if(fs.indexOf('u')>=0) s='<u>'+s+'</u>';
+      return s;
+    }
+    if(n.k==='c'){ const c=colorCSS(n.arg); return c?('<span style="color:'+c+'">'+kids+'</span>'):kids; }
+    return '██████';
+  }).join('');
+  return render(parseRich(text));
+}
+
 function richText(t){
-  let s=esc(t||'');
-  s=s.replace(/\{\{img:([A-Za-z0-9_-]+)\}\}/g,(m,id)=>{
-    const a=assetById(id);
-    return a?'<img class="pimg" src="'+a.dataUrl+'" alt="'+esc(a.name||'')+'" data-act="openImg" data-id="'+id+'">'
-      :'<span class="mini">［图片丢失：'+id+'］</span>';
-  });
-  s=s.replace(/\[\[([^\]]+)\]\]/g,(m,x)=>'<span class="ref" data-act="jumpTitle" data-title="'+x+'">'+x+'</span>');
-  const ps=s.split(/\n{2,}/).filter(x=>x.trim()!=='');
-  return ps.length?ps.map(p=>'<p>'+p.replace(/\n/g,'<br>')+'</p>').join(''):'<p class="mini">（还没有正文）</p>';
+  return '<div class="preview rich">'+richHTML(t,{revealAll:!!DB.ui.showRedacted})+'</div>';
 }
 function ctxEmpty(){
   return '<h4>从这里开始</h4>'
@@ -3021,6 +3263,7 @@ function viewSetup(){
     +'<label class="f"><span>正文编辑区</span><div style="display:flex;gap:8px;flex-wrap:wrap">'
     +'<button class="btn sm '+(richEditOn()?'primary':'')+'" data-act="setRichEdit" data-v="1">带方框（推荐）</button>'
     +'<button class="btn sm '+(richEditOn()?'':'primary')+'" data-act="setRichEdit" data-v="0">纯文本</button>'
+    +'<button class="btn sm '+(DB.ui.showRedacted?'primary':'')+'" data-act="setRedacted">'+(DB.ui.showRedacted?'涂黑已展开':'展开涂黑')+'</button>'
     +'</div><span class="mini">带方框时引用显示成框，图片直接显示；纯文本时看到 [[ ]] 原文。</span></label>'
     +'</div>';
   h+='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px">'
@@ -3277,6 +3520,13 @@ const ACT={
     const v=await uiPrompt('项目名称',DB.meta.title||'');
     if(v!=null){ DB.meta.title=v.trim()||'未命名'; touch(); render(); }
   },
+
+  fmtB(){ fmtApply('f','b'); },
+  fmtI(){ fmtApply('f','i'); },
+  fmtColor(el){ fmtApply('c',el.dataset.v||'danger'); },
+  fmtRedact(){ fmtApply('x','soft'); },
+  fmtClear(){ fmtClear(); },
+  setRedacted(){ DB.ui.showRedacted=!DB.ui.showRedacted; touch(); render(); toast(DB.ui.showRedacted?'已显示涂黑内容':'已收起涂黑内容'); },
   setJump(el){
     const t=document.getElementById(el.dataset.v);
     if(t&&t.scrollIntoView) t.scrollIntoView({behavior:'smooth',block:'start'});
@@ -4296,15 +4546,10 @@ function ceImg(id){
   const a=assetById(id);
   return a?'<img class="ce-img" contenteditable="false" data-img="'+id+'" src="'+a.dataUrl+'" alt="'+esc(a.name||'')+'">':'';
 }
-function textToCE(t){
-  let s=esc(t||'');
-  s=s.replace(/\{\{img:([A-Za-z0-9_-]+)\}\}/g,(m,id)=>ceImg(id));
-  s=s.replace(/\[\[([^\]]+)\]\](?!\])/g,(m,x)=>ceChip(x));
-  return s.replace(/\n/g,'<br>');
-}
+function textToCE(t){ return nodesToCE(parseRich(t)); }
 function ceToText(root){
-  let out='';
-  const walk=(node)=>{
+  const ser=(node)=>{
+    let out='';
     for(let i=0;i<node.childNodes.length;i++){
       const n=node.childNodes[i];
       if(n.nodeType===3){ out+=String(n.nodeValue||'').replace(/\u200b/g,''); continue; }
@@ -4312,14 +4557,17 @@ function ceToText(root){
       const ds=n.dataset||{};
       if(ds.ref!=null){ out+='[['+ds.ref+']]'; continue; }
       if(ds.img){ out+='{{img:'+ds.img+'}}'; continue; }
+      if(ds.x!=null){ out+='{{x:'+(ds.x||'soft')+'|'+ser(n)+'}}'; continue; }
+      if(ds.c!=null){ out+='{{c:'+ds.c+'|'+ser(n)+'}}'; continue; }
+      if(ds.f!=null){ out+='{{f:'+ds.f+'|'+ser(n)+'}}'; continue; }
       const tag=n.tagName;
       if(tag==='BR'){ out+='\n'; continue; }
-      if(tag==='DIV'||tag==='P'){ if(out&&out.slice(-1)!=='\n') out+='\n'; walk(n); continue; }
-      walk(n);
+      if(tag==='DIV'||tag==='P'||tag==='LI'){ if(out&&out.slice(-1)!=='\n') out+='\n'; out+=ser(n); continue; }
+      out+=ser(n);
     }
+    return out;
   };
-  walk(root);
-  return out.replace(/\u00a0/g,' ').replace(/\n{3,}/g,'\n\n').replace(/[ \t]+$/gm,'');
+  return ser(root).replace(/\u00a0/g,' ').replace(/\n{3,}/g,'\n\n').replace(/[ \t]+$/gm,'');
 }
 function syncCE(){
   const el=ceEl(); if(!el) return;
@@ -4369,14 +4617,7 @@ function paintRef(){
   }
 }
 
-function mdText(t){
-  return String(t||'')
-    .replace(/\[\[|\]\]/g,'')
-    .replace(/\{\{img:([A-Za-z0-9_-]+)\}\}/g,(m,id)=>{
-      const a=assetById(id);
-      return a?('\n\n!['+(a.name||'图')+']('+a.dataUrl+')\n\n'):'';
-    });
-}
+function mdText(t){ return richMarkdown(t); }
 function toMarkdown(){
   const L=[];
   L.push('# '+DB.meta.title);
