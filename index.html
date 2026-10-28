@@ -4858,8 +4858,8 @@ document.addEventListener('contextmenu',e=>{
   const sel=window.getSelection();
   const selText=(sel&&!sel.isCollapsed)?String(sel.toString()):'';
   const items=[];
-  if(true){
-    items.push({head:selText.trim()?('选中 '+selText.length+' 字'):'光标处：选格式后接着打'});
+  {
+    if(selText.trim()) items.push({head:'选中 '+selText.length+' 字'});
 
     items.push({bar:[
       {act:'fmtB',icon:'B',title:'加粗 Ctrl+B'},
