@@ -2964,7 +2964,17 @@ async function ghTest(){
 }
 async function ghPush(force){
   const cfg=syncCfg();
-  const lastAt=(DB.sync&&DB.sync.lastAt)||0;
+  let lastAt=(DB.sync&&DB.sync.lastAt)||0;
+  if(DB.sync&&DB.sync.autoPull!==false){
+    const base=lastAt;
+    try{
+      await ghPull();
+      DB.sync.lastAt=base;
+      lastAt=base;
+    }catch(e){
+      if(e&&e.status!==404) console.warn('自动拉取失败，继续推送：',e.message);
+    }
+  }
   const cs=chapters();
   const metaObj={
     v:2,updatedAt:now(),dir:cfg.dir,
@@ -3358,6 +3368,10 @@ function viewSetup(){
     +'<label class="f"><span>仓库 owner/repo</span><input type="text" data-bind="sync.repo" value="'+esc(sy.repo||DEFAULT_REPO)+'" placeholder="owner/repo"></label>'
     +'<label class="f"><span>分支</span><input type="text" data-bind="sync.branch" value="'+esc(sy.branch||'')+'" placeholder="main"></label>'
     +'<label class="f"><span>目录</span><input type="text" data-bind="sync.path" value="'+esc(sy.path||'')+'" placeholder="backup/项目名/"></label>'
+    +'</div>'
+    +'<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:6px 0 10px">'
+    +'<button class="btn sm '+(sy.autoPull!==false?'primary':'ghost')+'" data-act="toggleAutoPull">'+(sy.autoPull!==false?'推送前自动拉取：开':'推送前自动拉取：关')+'</button>'
+    +'<span class="mini">开着的话，点上传会先拉一次对方的改动再推，避免词条/素材被覆盖</span>'
     +'</div>'
     +'<label class="f"><span>登录中转地址（用「用 GitHub 登录」时必填）</span><input type="text" data-bind="sync.proxy" value="'+esc(sy.proxy||DEFAULT_PROXY)+'" placeholder="https://xxxx.deno.net"></label>'
     +'<label class="f"><span>Token（只存这台电脑，不会写进导出文件）</span><input id="ghToken" type="password" value="'+esc(getToken())+'" placeholder="github_pat_..." autocomplete="off"></label>'
@@ -4442,6 +4456,13 @@ const ACT={
     }else{
       warn('这个浏览器不支持读剪贴板，请手动 Ctrl+V');
     }
+  },
+  toggleAutoPull(){
+    DB.sync=DB.sync||{};
+    const on=DB.sync.autoPull!==false;
+    DB.sync.autoPull=!on;
+    touch(); render();
+    toast(!on?'推送前会自动拉取':'已关闭自动拉取');
   },
   ghTest(){ return ghTest(); },
   ghPush(){
