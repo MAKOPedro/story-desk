@@ -471,6 +471,10 @@ html[data-theme="night"]{--c-danger:#e0836f;--c-warn:#d9ab55;--c-ok:#86b394;--c-
 .drawer-rich{min-height:56px;font-size:14px;line-height:1.85}
 .drawer-rich:empty::before{content:attr(data-ph);color:var(--dim2)}
 .drawer-rich .redact,.drawer-rich .fmt{font-size:inherit}
+.ctxbar{display:flex;gap:2px;padding:2px 4px 6px;border-bottom:1px solid var(--line);margin-bottom:4px}
+.ctxbar button{width:26px;height:26px;border:1px solid transparent;border-radius:6px;background:none;cursor:pointer;
+  font-size:13px;line-height:1;padding:0;font-family:var(--serif)}
+.ctxbar button:hover{background:var(--hover);border-color:var(--line2)}
 </style>
 </head>
 <body>
@@ -945,10 +949,7 @@ function hideFmtBar(){
   if(bar) bar.classList.remove('on');
 }
 let FMT_T=null;
-document.addEventListener('selectionchange',()=>{
-  if(FMT_T) clearTimeout(FMT_T);
-  FMT_T=setTimeout(()=>{ try{ showFmtBar(); }catch(e){} },120);
-});
+document.addEventListener('selectionchange',()=>{ hideFmtBar(); });
 document.addEventListener('scroll',hideFmtBar,true);
 document.addEventListener('keydown',function(e){
   const el=ceEl();
@@ -3549,11 +3550,11 @@ const ACT={
     if(v!=null){ DB.meta.title=v.trim()||'未命名'; touch(); render(); }
   },
 
-  fmtB(){ fmtApply('f','b'); },
-  fmtI(){ fmtApply('f','i'); },
-  fmtColor(el){ fmtApply('c',el.dataset.v||'danger'); },
-  fmtRedact(){ fmtApply('x','soft'); },
-  fmtClear(){ fmtClear(); },
+  fmtB(){ fmtApply('f','b'); closeCtx(); },
+  fmtI(){ fmtApply('f','i'); closeCtx(); },
+  fmtColor(el){ fmtApply('c',el.dataset.v||'danger'); closeCtx(); },
+  fmtRedact(){ fmtApply('x','soft'); closeCtx(); },
+  fmtClear(){ fmtClear(); closeCtx(); },
   setRedacted(){ DB.ui.showRedacted=!DB.ui.showRedacted; touch(); render(); toast(DB.ui.showRedacted?'已显示涂黑内容':'已收起涂黑内容'); },
   setJump(el){
     const t=document.getElementById(el.dataset.v);
@@ -4801,6 +4802,7 @@ function openCtx(x,y,items,sel){
   m.innerHTML=items.map(it=>{
     if(it.sep) return '<div class="sep"></div>';
     if(it.head!=null) return '<div class="mini">'+esc(it.head)+'</div>';
+    if(it.bar) return '<div class="ctxbar">'+it.bar.map(b=>'<button data-act="'+b.act+'"'+(b.v!=null?(' data-v="'+esc(b.v)+'"'):'')+' title="'+esc(b.title||'')+'"'+(b.color?(' style="color:'+b.color+'"'):'')+'>'+b.icon+'</button>').join('')+'</div>';
     return '<button data-act="'+it.act+'"'+(it.v!=null?(' data-v="'+esc(it.v)+'"'):'')+'><span class="ic">'+(it.icon||'')+'</span>'+esc(it.label)+'</button>';
   }).join('');
   m.style.display='block';
@@ -4810,27 +4812,45 @@ function openCtx(x,y,items,sel){
   CTXOPEN=true;
 }
 document.addEventListener('contextmenu',e=>{
-  const ta=e.target;
-  if(!ta||ta.id!=='eText') return;
+  const t=e.target;
+  if(!t||!t.closest) return;
+  const field=t.closest('.drawer-rich');
+  const isProse=(t.id==='eText')||!!t.closest('#eText');
+  if(!field&&!isProse) return;
   e.preventDefault();
-  const s=ta.selectionStart||0, en=ta.selectionEnd||0;
-  const sel=String(ta.value||'').slice(s,en);
+  const sel=window.getSelection();
+  const selText=(sel&&!sel.isCollapsed)?String(sel.toString()):'';
   const items=[];
-  if(sel.trim()){
-    items.push({head:'选中 '+sel.length+' 字'});
-    items.push({act:'ctxWrapRef',icon:'□',label:'变成引用 [[ ]]'});
-    items.push({act:'ctxNewEntry',icon:'＋',label:'用这段文字新建词条'});
+  if(selText.trim()){
+    items.push({head:'选中 '+selText.length+' 字'});
+    items.push({bar:[
+      {act:'fmtB',icon:'B',title:'加粗 Ctrl+B'},
+      {act:'fmtI',icon:'I',title:'斜体 Ctrl+I'},
+      {act:'fmtColor',icon:'●',title:'危险红',v:'danger',color:'var(--c-danger)'},
+      {act:'fmtColor',icon:'●',title:'提示橙',v:'warn',color:'var(--c-warn)'},
+      {act:'fmtColor',icon:'●',title:'肯定绿',v:'ok',color:'var(--c-ok)'},
+      {act:'fmtColor',icon:'●',title:'冷蓝',v:'info',color:'var(--c-info)'},
+      {act:'fmtColor',icon:'●',title:'次要灰',v:'mute',color:'var(--c-mute)'},
+      {act:'fmtRedact',icon:'█',title:'涂黑'},
+      {act:'fmtClear',icon:'⌫',title:'清除格式'}
+    ]});
+    if(isProse&&!field){
+      items.push({act:'ctxWrapRef',icon:'□',label:'变成引用 [[ ]]'});
+      items.push({act:'ctxNewEntry',icon:'＋',label:'用这段文字新建词条'});
+    }
     items.push({sep:true});
   }
-  items.push({act:'ctxInsertRef',icon:'□',label:'插入引用…'});
-  items.push({act:'ctxPickImg',icon:'▣',label:'插入图片…'});
-  items.push({sep:true});
-  items.push({act:'ctxCopy',icon:'⧉',label:'复制'});
-  items.push({act:'ctxCut',icon:'✂',label:'剪切'});
-  items.push({act:'ctxPaste',icon:'⎘',label:'粘贴'});
-  items.push({sep:true});
-  items.push({act:'ctxAll',icon:'▭',label:'全选'});
-  openCtx(e.clientX,e.clientY,items,{s:s,e:en});
+  if(isProse&&!field){
+    items.push({act:'ctxInsertRef',icon:'□',label:'插入引用…'});
+    items.push({act:'ctxPickImg',icon:'▣',label:'插入图片…'});
+    items.push({sep:true});
+    items.push({act:'ctxCopy',icon:'⧉',label:'复制'});
+    items.push({act:'ctxCut',icon:'✂',label:'剪切'});
+    items.push({act:'ctxPaste',icon:'⎘',label:'粘贴'});
+    items.push({sep:true});
+    items.push({act:'ctxAll',icon:'▭',label:'全选'});
+  }
+  openCtx(e.clientX,e.clientY,items,{s:0,e:0});
 });
 document.addEventListener('click',e=>{
   if(!CTXOPEN) return;
