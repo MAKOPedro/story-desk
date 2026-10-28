@@ -950,6 +950,12 @@ function hideFmtBar(){
 }
 let FMT_T=null;
 document.addEventListener('selectionchange',()=>{ hideFmtBar(); });
+document.addEventListener('focusout',function(e){
+  const el=e.target;
+  if(el&&el.isContentEditable&&(el.id==='eText'||(el.classList&&el.classList.contains('drawer-rich')))){
+    setTimeout(()=>{ try{ fmtCleanup(el); }catch(err){} },0);
+  }
+},true);
 document.addEventListener('scroll',hideFmtBar,true);
 document.addEventListener('keydown',function(e){
   const el=ceEl();
@@ -1358,7 +1364,22 @@ function fmtApply(kind,val){
   const el=activeRich();
   if(!el) return toast('先点进一个可编辑的区域');
   const sel=window.getSelection(); if(!sel||!sel.rangeCount) return;
-  const r=sel.getRangeAt(0); if(r.collapsed) return toast('先选中一段文字');
+  const r=sel.getRangeAt(0);
+  if(r.collapsed){
+    const span=document.createElement('span');
+    if(kind==='f'){ span.className='fmt'; span.dataset.f=val; span.setAttribute('style',fmtStyle(val)); }
+    else if(kind==='c'){ span.className='fmt'; span.dataset.c=val; span.setAttribute('style','color:'+colorCSS(val)); }
+    else { span.className='redact reveal'; span.dataset.x=val||'soft'; }
+    span.setAttribute('data-pending','1');
+    span.appendChild(document.createTextNode('\u200b'));
+    r.insertNode(span);
+    const r2=document.createRange();
+    r2.setStart(span.firstChild,1); r2.collapse(true);
+    sel.removeAllRanges(); sel.addRange(r2);
+    try{ el.focus(); }catch(e){}
+    syncRich(el);
+    return;
+  }
   const hit=fmtInside(kind,val,el);
   if(hit){ fmtUnwrap(hit); syncRich(el); hideFmtBar(); return; }
   const frag=r.extractContents();
@@ -1376,9 +1397,25 @@ function fmtClear(){
   const el=activeRich(); if(!el) return;
   const sel=window.getSelection(); if(!sel||!sel.rangeCount) return;
   const r=sel.getRangeAt(0);
+  if(r.collapsed){
+    let n=r.startContainer;
+    if(n.nodeType===3) n=n.parentNode;
+    while(n&&n!==el){
+      if(n.nodeType===1&&n.dataset&&n.hasAttribute('data-pending')){ fmtUnwrap(n); syncRich(el); return; }
+      n=n.parentNode;
+    }
+    return;
+  }
   let n=0;
   Array.from(el.querySelectorAll('.fmt,.redact')).forEach(x=>{ if(r.intersectsNode(x)){ fmtUnwrap(x); n++; } });
   if(n){ syncRich(el); hideFmtBar(); }
+}
+function fmtCleanup(el){
+  if(!el) return;
+  Array.from(el.querySelectorAll('[data-pending]')).forEach(x=>{
+    const txt=String(x.textContent||'').replace(/\u200b/g,'').trim();
+    if(!txt) fmtUnwrap(x); else x.removeAttribute('data-pending');
+  });
 }
 
 function richHTML(text,opts){
@@ -4586,9 +4623,9 @@ function ceToText(root){
       const ds=n.dataset||{};
       if(ds.ref!=null){ out+='[['+ds.ref+']]'; continue; }
       if(ds.img){ out+='{{img:'+ds.img+'}}'; continue; }
-      if(ds.x!=null){ out+='{{x:'+(ds.x||'soft')+'|'+ser(n)+'}}'; continue; }
-      if(ds.c!=null){ out+='{{c:'+ds.c+'|'+ser(n)+'}}'; continue; }
-      if(ds.f!=null){ out+='{{f:'+ds.f+'|'+ser(n)+'}}'; continue; }
+      if(ds.x!=null){ const kx=ser(n); if(kx) out+='{{x:'+(ds.x||'soft')+'|'+kx+'}}'; continue; }
+      if(ds.c!=null){ const kc=ser(n); if(kc) out+='{{c:'+ds.c+'|'+kc+'}}'; continue; }
+      if(ds.f!=null){ const kf=ser(n); if(kf) out+='{{f:'+ds.f+'|'+kf+'}}'; continue; }
       const tag=n.tagName;
       if(tag==='BR'){ out+='\n'; continue; }
       if(tag==='DIV'||tag==='P'||tag==='LI'){ if(out&&out.slice(-1)!=='\n') out+='\n'; out+=ser(n); continue; }
@@ -4821,8 +4858,9 @@ document.addEventListener('contextmenu',e=>{
   const sel=window.getSelection();
   const selText=(sel&&!sel.isCollapsed)?String(sel.toString()):'';
   const items=[];
-  if(selText.trim()){
-    items.push({head:'选中 '+selText.length+' 字'});
+  if(true){
+    items.push({head:selText.trim()?('选中 '+selText.length+' 字'):'光标处：选格式后接着打'});
+
     items.push({bar:[
       {act:'fmtB',icon:'B',title:'加粗 Ctrl+B'},
       {act:'fmtI',icon:'I',title:'斜体 Ctrl+I'},
