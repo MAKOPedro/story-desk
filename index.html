@@ -739,7 +739,7 @@ function paintSaved(){
 }
 function snapshot(reason){
   const r=String(reason||'自动');
-  return makeVersion(r==='自动'?'':r, r==='自动'?'auto':'manual');
+  return makeVersion(r==='自动'?'':r, 'auto');
 }
 
 /* ---------- 版本存档 ---------- */
@@ -777,7 +777,8 @@ function vmeta(){
   return VMETA;
 }
 function vSaveIndex(){ try{ localStorage.setItem(VINDEX,JSON.stringify(vmeta())); }catch(e){} }
-function versions(){ return vmeta(); }
+function versions(){ return vmeta().filter(v=>vKind(v)==='manual'); }
+function autos(){ return vmeta().filter(v=>vKind(v)==='auto').sort((a,b)=>(b.at||0)-(a.at||0)); }
 async function vMigrate(){
   try{
     const raw=localStorage.getItem(VKEY);
@@ -855,13 +856,13 @@ function vLoad(){
   });
 }
 function vPrune(){
-  // IDB 不可用时，靠 localStorage 索引里的 data 兜底，这里只做数量裁剪
-  const list=vmeta();
+  // 手动 12 份、自动 10 份，各自独立计算，互不挤占
+  const list=vmeta().slice().sort((a,b)=>(b.at||0)-(a.at||0));
   let an=0, mn=0, total=0;
   const keep=[];
   list.forEach(v=>{
     const kk=vKind(v);
-    if(kk==='auto'){ if(an>=5) return; an++; }
+    if(kk==='auto'){ if(an>=10) return; an++; }
     else{ if(mn>=12) return; mn++; }
     total+=(v.bytes||0);
     if(total<48*1024*1024) keep.push(v);
@@ -870,12 +871,12 @@ function vPrune(){
   VMETA=keep; vSaveIndex();
   dropped.forEach(v=>{ if(IDB_OK===true){ try{ idbDel('versions',vId(v)).catch(()=>{}); }catch(e){} } });
 }
-function makeVersion(label,kind){
+function makeVersion(label,kind,num){
   try{
     const k=(kind==='auto')?'auto':'manual';
     const list=vmeta();
     const manual=list.filter(v=>vKind(v)==='manual');
-    const n=(k==='manual')?(manual.reduce((m,v)=>Math.max(m,v.n||0),0)+1):null;
+    const n=(k==='manual')?((num&&+num>0)?+num:(manual.reduce((m,v)=>Math.max(m,v.n||0),0)+1)):null;
     const data=JSON.stringify({v:3,meta:DB.meta,entries:DB.entries||[],nodes:DB.nodes||[],rels:DB.rels||[],
       events:DB.events||[],threads:DB.threads||[],dialogues:DB.dialogues||[],quests:DB.quests||[],
       map:DB.map||{},plan:DB.plan||{},refs:DB.refs||[]});
@@ -3400,7 +3401,7 @@ async function frApply(){
   const total=hits.reduce((s,h)=>s+h.count,0);
   if(!total) return toast('没有找到');
   if(!await uiConfirm('把 '+total+' 处「'+q+'」替换成「'+(to||'（空）')+'」？\n替换前会自动存一版。')) return;
-  makeVersion();
+  makeVersion('','auto');
   const n=frRun(q,to,cs);
   touch(); render();
   toast('已替换 '+n+' 处');
@@ -3500,12 +3501,13 @@ function viewSetup(){
       +'</div>';
   h+='<div style="display:flex;gap:10px;align-items:center;margin-bottom:8px">'
     +'<button class="btn primary" data-act="saveVer">存一版</button>'
-    +'<span class="mini">'+(manV.length?('共 '+manV.length+' 版 · 最新 v'+manV[0].n+' · '+dt(manV[0].at)):'还没有手动存档')+'</span></div>';
+    +'<span class="mini">'+(manV.length?('共 '+manV.length+' 版 · 最新 v'+manV[0].n+' · '+dt(manV[0].at)):'还没有手动存档')+'</span>'
+    +'<span class="mini">存档时自己填版本号</span></div>';
   h+=manV.length?manV.map(v=>vrow(v,false)).join('')
     :'<div class="hint">还没有存过版本。写完一章点一次「存一版」，出问题能退回来。</div>';
-  h+='<div class="mini" style="margin:16px 0 6px">自动存档 · 每 10 分钟一份，最多 5 份，按时间命名，不占版本号</div>';
-  h+=autV.length?autV.slice(0,5).map(v=>vrow(v,true)).join('')
-    :'<div class="hint">还没有自动存档。</div>';
+  h+='<div style="display:flex;gap:10px;align-items:center;margin:14px 0 6px">'
+    +'<button class="btn sm ghost" data-act="showAutos">自动快照（'+autV.length+'）</button>'
+    +'<span class="mini">拉取/恢复/定时备份时自动生成，最多 10 份，<b>不占版本号</b></span></div>';
   h+='<hr class="sep"><div style="display:flex;gap:8px;flex-wrap:wrap">'
     +'<button class="btn" data-act="wipe" style="color:#a34a3f">清空全部</button></div>';
   h+='<div class="mini" style="margin-top:16px;line-height:1.9">'
@@ -3777,7 +3779,7 @@ const ACT={
   },
   delSub(el){
     const id=el.dataset.id;
-    makeVersion();
+    makeVersion('','auto');
     deleteNode(id);
     if(DB.ui.nodeId===id) DB.ui.nodeId=null;
     closeModal(); touch(); render(); toast('已删除');
@@ -3785,7 +3787,7 @@ const ACT={
   delOnly(el){
     const id=el.dataset.id;
     const n=nodeBy(id); if(!n) return;
-    makeVersion();
+    makeVersion('','auto');
     const parent=n.parentId||null;
     children(id).forEach(k=>{ k.parentId=parent; });
     DB.nodes=DB.nodes.filter(x=>x.id!==id);
@@ -4152,10 +4154,35 @@ const ACT={
     q.updatedAt=now(); touch(); renderDrawer();
   },
   async saveVer(){
-    const label=(await uiPrompt('给这一版起个名字（可以留空）',''))||'';
-    const rec=makeVersion(String(label||'').trim(),'manual');
-    if(rec) toast('已存为 v'+rec.n);
+    const list=versions();
+    const next=list.reduce((m,v)=>Math.max(m,v.n||0),0)+1;
+    const ans=await uiPrompt('存为第几版？（填 v 后面的数字）', String(next));
+    if(ans===null||ans===undefined) return;
+    const n=parseInt(String(ans).replace(/[^0-9]/g,''),10);
+    if(!n||n<1||n>99) return warn('版本号填 1–99 的数字');
+    const old=list.find(v=>v.n===n);
+    if(old){
+      if(!await uiConfirm('v'+n+' 已经存在（'+dt(old.at)+'，'+esc(old.label||'—')+'），用现在的内容覆盖它？')) return;
+      try{ await idbDel('versions',vId(old)); }catch(e){}
+      VMETA=vmeta().filter(v=>vId(v)!==vId(old)); vSaveIndex();
+    }
+    const rec=makeVersion('', 'manual', n);
+    if(rec) toast('已存为 v'+n);
     render();
+  },
+  showAutos(){
+    const list=autos();
+    const body=list.length
+      ?'<div class="hint" style="margin-bottom:10px">这些是拉取/恢复/定时备份时自动生成的，不会占用你的版本号。最多保留 10 份。</div>'
+        +list.map(v=>'<div class="row" style="font-size:12.5px;padding:6px 0;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px">'
+          +'<b style="color:var(--accent);width:44px;flex:none">'+vTime(v)+'</b>'
+          +'<span style="color:var(--dim2);width:120px;flex:none">'+vDay(v)+'</span>'
+          +'<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(v.label||'自动')+'</span>'
+          +'<span class="mini" style="flex:none">'+v.words+' 字</span>'
+          +'<button class="btn sm ghost" data-act="restoreVer" data-id="'+vId(v)+'">恢复</button>'
+          +'</div>').join('')
+      :'<div class="hint">还没有自动快照。</div>';
+    modal('自动快照（'+list.length+'）', body, '<button class="btn" data-act="closeModal">关闭</button>', true);
   },
   restoreVer(el){ restoreVersion(el.dataset.id); },
   diffVer(el){ showDiff(el.dataset.id); },
