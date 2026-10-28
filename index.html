@@ -3078,7 +3078,7 @@ function syncCfg(){
   const repo=String(s.repo||'').trim()||DEFAULT_REPO;
   if(!repo||repo.indexOf('/')<0) throw new Error('先填仓库，格式 owner/repo');
   const branch=String(s.branch||'').trim()||'main';
-  let dir=String(s.path||'').trim()||('backup/'+safeName(DB.meta.title)+'/');
+  let dir=String(s.path||'').trim()||'backup/story/';
   if(/\.json$/i.test(dir)) dir=dir.replace(/[^\/]+$/,'');
   if(!/\/$/.test(dir)) dir+='/';
   return {repo:repo,branch:branch,dir:dir};
@@ -3173,10 +3173,11 @@ async function ghTest(){
   toast('连接成功：'+(me&&me.login||'?')+' → '+r.full_name+(r.private?' · 私有仓库':' · 公开仓库'));
   persist(); render();
 }
-async function ghPush(force){
+async function ghPush(force,opts){
+  const o=opts||{};
   const cfg=syncCfg();
   let lastAt=(DB.sync&&DB.sync.lastAt)||0;
-  if(DB.sync&&DB.sync.autoPull!==false){
+  if(DB.sync&&DB.sync.autoPull!==false&&!o.noPull){
     const base=lastAt;
     try{
       await ghPull();
@@ -3198,12 +3199,12 @@ async function ghPush(force){
     {path:cfg.dir+'meta.json',content:JSON.stringify(metaObj,null,2)},
     {path:cfg.dir+'全文.md',content:toMarkdown()}
   ];
-  const all=!lastAt||DB.sync.lastDir!==cfg.dir;
+  const all=o.all||!lastAt||DB.sync.lastDir!==cfg.dir;
   cs.forEach(c=>{
     if(all||(c.updatedAt||0)>lastAt)
       files.push({path:cfg.dir+'chapters/'+c.id+'.json',content:JSON.stringify(c,null,2)});
   });
-  const msg='备份 '+new Date().toLocaleString('zh-CN')+' · '+totalWords()+' 字 · '+cs.length+' 章';
+  const msg=(o.msg||'备份')+' · '+new Date().toLocaleString('zh-CN')+' · '+totalWords()+' 字 · '+cs.length+' 章';
   const base='https://api.github.com/repos/'+cfg.repo+'/git';
   let head=null;
   try{ head=await ghFetch(base+'/ref/heads/'+cfg.branch); }
@@ -3237,10 +3238,30 @@ async function ghPush(force){
   persist(); render();
   toast('已备份 '+cs.length+' 章到 '+cfg.repo);
 }
+async function ghPublish(){
+  const cfg=syncCfg();
+  if(!chapters().length) return warn('还没有章节，先写点东西再上传');
+  await ghPush(false,{all:true,noPull:false,msg:'版本发布 '+(DB.meta.title||'')});
+  DB.sync.lastAt=now(); DB.sync.lastDir=cfg.dir; persist();
+  let back=null;
+  try{ back=await ghGetJson(cfg,cfg.dir+'meta.json'); }catch(e){}
+  const ok=!!(back&&Array.isArray(back.chapters));
+  const url='https://github.com/'+cfg.repo+'/tree/'+cfg.branch+'/'+cfg.dir.replace(/\/$/,'');
+  modal(ok?'已发布，同事可以拉取了':'已推送，但回读校验失败',
+    '<div style="font-size:12.5px;line-height:2">'
+    +'<div>目录：<b>'+esc(cfg.dir)+'</b></div>'
+    +'<div>章节：<b>'+(back?back.chapters.length:chapters().length)+'</b> 个'
+    +(ok?'　<span style="color:var(--c-ok)">✓ 已在仓库里读到 meta.json</span>':'　<span style="color:var(--c-danger)">✗ 没读到，稍等几秒再拉一次试试</span>')+'</div>'
+    +'<div>字数：<b>'+totalWords()+'</b></div>'
+    +'<div style="margin-top:8px;color:var(--dim)">同事那边要保证「仓库 / 分支 / 目录」三项和你完全一致，才能拉到这一版。</div>'
+    +'</div>',
+    '<button class="btn" data-act="closeModal">知道了</button>'
+    +'<a class="btn primary" href="'+esc(url)+'" target="_blank" rel="noopener">去仓库看看</a>');
+}
 async function ghPull(){
   const cfg=syncCfg();
   const metaObj=await ghGetJson(cfg,cfg.dir+'meta.json');
-  if(!metaObj||!Array.isArray(metaObj.chapters)) throw new Error('远端还没有 meta.json，先上传一次');
+  if(!metaObj||!Array.isArray(metaObj.chapters)) throw new Error('远端 '+cfg.dir+' 下没有 meta.json —— 要么还没上传过，要么两个人填的「目录」不一致');
   snapshot('拉取前');
   const local={};
   chapters().forEach(c=>{ local[c.id]=c; });
@@ -3596,10 +3617,12 @@ function viewSetup(){
     +'</div>'
     +'<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">'
     +'<button class="btn" data-act="ghTest">测试连接</button>'
+    +'<button class="btn primary" data-act="ghPublish" title="全量推一次，同事就能拉到这一版">正式发布</button>'
     +'<button class="btn primary" data-act="ghPush">上传备份</button>'
     +'<button class="btn" data-act="ghPull">从仓库拉取</button>'
     +'<span class="mini">'+esc(syncStatusText())+'</span>'
     +'</div>'
+    +'<div class="mini" style="margin:0 0 6px">两个人要拉到同一版，<b>仓库 / 分支 / 目录</b>必须完全一致。当前目录：<b>'+esc(sy.path||'backup/story/')+'</b></div>'
     +'<div class="mini" style="margin-top:10px;line-height:1.8">仓库里会是：<b>meta.json</b>（人物/设定/关系/线索）＋ <b>chapters/每一章.json</b> ＋ <b>全文.md</b>。<br>'
     +'按章分片，所以几个人各写各的章不会互相覆盖；同一章谁最后改谁生效。<br>'
     +'Token 需要 <b>Contents: Read and write</b> 权限，只授权这一个仓库。改了 Token 记得点一下别处让它失焦保存。</div>'
@@ -4787,6 +4810,9 @@ const ACT={
     toast(!on?'推送前会自动拉取':'已关闭自动拉取');
   },
   ghTest(){ return ghTest(); },
+  ghPublish(){
+    return ghPublish().catch(e=>warn('发布失败：'+e.message));
+  },
   ghPush(){
     return ghPush(false).catch(e=>{
       if(e&&(e.status===422||e.status===409)){
