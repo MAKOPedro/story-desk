@@ -3191,7 +3191,7 @@ async function ghPush(force,opts){
   const metaObj={
     v:2,updatedAt:now(),dir:cfg.dir,
     meta:DB.meta,entries:DB.entries,rels:DB.rels||[],events:DB.events||[],threads:DB.threads||[],
-    dialogues:DB.dialogues||[],quests:DB.quests||[],map:DB.map||{},assets:DB.assets||[],plan:DB.plan||{},refs:DB.refs||[],
+    dialogues:DB.dialogues||[],quests:DB.quests||[],map:DB.map||{},assets:DB.assets||[],plan:DB.plan||{},refs:DB.refs||[],folders:DB.folders||[],
     nodes:DB.nodes.filter(n=>n.type!=='chapter'),
     chapters:cs.map(c=>({id:c.id,title:c.title,order:c.order,updatedAt:c.updatedAt||0}))
   };
@@ -3237,6 +3237,48 @@ async function ghPush(force,opts){
   DB.sync.lastMsg=msg;
   persist(); render();
   toast('已备份 '+cs.length+' 章到 '+cfg.repo);
+}
+async function ghPullForce(){
+  const cfg=syncCfg();
+  const metaObj=await ghGetJson(cfg,cfg.dir+'meta.json');
+  if(!metaObj||!Array.isArray(metaObj.chapters)) throw new Error('远端没有 meta.json');
+  if(!await uiConfirm('用仓库里的版本覆盖本地？\n\n本地较新的章节和词条都会被仓库的版本替换。\n覆盖前会自动存一个自动快照，可以退回。')) return;
+  snapshot('强制拉取前');
+  const seen={};
+  let upd=0,add=0;
+  for(const rc of metaObj.chapters){
+    seen[rc.id]=1;
+    let full=null;
+    try{ full=await ghGetJson(cfg,cfg.dir+'chapters/'+rc.id+'.json'); }
+    catch(e){ if(e.status!==404) throw e; }
+    if(!full) continue;
+    const node=fixNode(full);
+    const lc=DB.nodes.find(function(n){ return n.id===rc.id; });
+    if(lc){ Object.assign(lc,node); upd++; } else { DB.nodes.push(node); add++; }
+  }
+  DB.entries=(metaObj.entries||[]).map(fixEntry).filter(Boolean);
+  DB.nodes=DB.nodes.filter(function(n){ return n.type==='chapter'?seen[n.id]:true; });
+  DB.nodes=DB.nodes.concat((metaObj.nodes||[]).map(fixNode).filter(Boolean).filter(function(n){ return !DB.nodes.some(function(x){ return x.id===n.id; }); }));
+  DB.folders=(metaObj.folders||[]).slice();
+  DB.rels=(metaObj.rels||[]).slice();
+  DB.events=(metaObj.events||[]).slice();
+  DB.threads=(metaObj.threads||[]).slice();
+  DB.dialogues=(metaObj.dialogues||[]).slice();
+  DB.quests=(metaObj.quests||[]).slice();
+  DB.refs=(metaObj.refs||[]).slice();
+  if(metaObj.plan) DB.plan=metaObj.plan;
+  if(metaObj.map) DB.map=metaObj.map;
+  if(metaObj.meta) DB.meta=Object.assign({},DB.meta,metaObj.meta);
+  DB.sync.lastAt=now(); DB.sync.lastDir=cfg.dir;
+  if(!DB.ui.nodeId||!nodeBy(DB.ui.nodeId)) DB.ui.nodeId=(chapters()[0]||{}).id||null;
+  persist(); render();
+  modal('已按仓库覆盖',
+    '<div style="font-size:12.5px;line-height:2">'
+    +'<div>章节：覆盖 <b>'+upd+'</b> · 新增 <b>'+add+'</b></div>'
+    +'<div>词条：<b>'+DB.entries.length+'</b> · 文件夹：<b>'+DB.folders.length+'</b></div>'
+    +'<div style="margin-top:8px;color:var(--dim)">本地独有的章节和词条已被替换。想找回：设置 → 版本存档 → 自动快照。</div>'
+    +'</div>',
+    '<button class="btn" data-act="closeModal">知道了</button>');
 }
 async function ghPublish(){
   const cfg=syncCfg();
@@ -3287,6 +3329,15 @@ async function ghPull(){
   DB.assets=unionById(DB.assets||[],metaObj.assets||[]);
   if(metaObj.plan&&(metaObj.plan.updatedAt||0)>(ensurePlan().updatedAt||0)) DB.plan=metaObj.plan;
   DB.refs=unionById(DB.refs||[],metaObj.refs||[]);
+  if(Array.isArray(metaObj.folders)){
+    DB.folders=DB.folders||[];
+    metaObj.folders.forEach(function(rf){
+      if(!rf||!rf.id) return;
+      const lf=DB.folders.find(function(x){ return x.id===rf.id; });
+      if(lf) lf.name=rf.name||lf.name;
+      else DB.folders.push({id:rf.id,name:rf.name||'文件夹',createdAt:rf.createdAt||now()});
+    });
+  }
   if(metaObj.map&&(metaObj.map.updatedAt||0)>(ensureMap().updatedAt||0)) DB.map=metaObj.map;
   if(metaObj.meta&&(metaObj.updatedAt||0)>((DB.meta&&DB.meta.updatedAt)||0)){
     DB.meta=Object.assign({},DB.meta,metaObj.meta);
@@ -3297,7 +3348,15 @@ async function ghPull(){
   DB.sync.lastDir=cfg.dir;
   if(!DB.ui.nodeId||!nodeBy(DB.ui.nodeId)) DB.ui.nodeId=(chapters()[0]||{}).id||null;
   persist(); render();
-  toast('拉取完成：更新 '+upd+' 章 · 新增 '+add+' 章 · 本地更新保留 '+kept+' 章');
+  const fn=(DB.folders||[]).length;
+  modal('拉取完成',
+    '<div style="font-size:12.5px;line-height:2">'
+    +'<div>章节：更新 <b>'+upd+'</b> · 新增 <b>'+add+'</b> · 本地较新跳过 <b>'+kept+'</b></div>'
+    +'<div>文件夹：<b>'+fn+'</b> 个</div>'
+    +(kept?('<div style="margin-top:8px;color:var(--c-warn)">有 '+kept+' 章因为本地修改时间更新而被保留，没有用仓库的版本。要以仓库为准，点「强制以仓库为准」。</div>'):'')
+    +'</div>',
+    '<button class="btn" data-act="closeModal">知道了</button>'
+    +(kept?'<button class="btn primary" data-act="ghPullForce">强制以仓库为准</button>':''));
 }
 
 /* ---------- 本地文件夹自动备份 ---------- */
@@ -3620,6 +3679,7 @@ function viewSetup(){
     +'<button class="btn primary" data-act="ghPublish" title="全量推一次，同事就能拉到这一版">正式发布</button>'
     +'<button class="btn primary" data-act="ghPush">上传备份</button>'
     +'<button class="btn" data-act="ghPull">从仓库拉取</button>'
+    +'<button class="btn ghost" data-act="ghPullForce" title="用仓库的版本覆盖本地">强制以仓库为准</button>'
     +'<span class="mini">'+esc(syncStatusText())+'</span>'
     +'</div>'
     +'<div class="mini" style="margin:0 0 6px">两个人要拉到同一版，<b>仓库 / 分支 / 目录</b>必须完全一致。当前目录：<b>'+esc(sy.path||'backup/story/')+'</b></div>'
@@ -4810,6 +4870,9 @@ const ACT={
     toast(!on?'推送前会自动拉取':'已关闭自动拉取');
   },
   ghTest(){ return ghTest(); },
+  ghPullForce(){
+    return ghPullForce().catch(e=>warn('强制拉取失败：'+e.message));
+  },
   ghPublish(){
     return ghPublish().catch(e=>warn('发布失败：'+e.message));
   },
