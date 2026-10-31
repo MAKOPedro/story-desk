@@ -596,7 +596,12 @@ function orderedChapters(){
   });
   return out;
 }
-function totalWords(){ return chapters().reduce((s,c)=>s+chars(c.text),0); }
+function totalWords(){
+  return DB.nodes.reduce(function(s,n){
+    if(!n||(n.type!=='chapter'&&n.type!=='scene')) return s;
+    return s+chars(n.text);
+  },0);
+}
 function treePath(n){
   const p=[]; let cur=n;
   while(cur){ p.unshift(cur); cur=cur.parentId?nodeBy(cur.parentId):null; }
@@ -3858,10 +3863,6 @@ function openNodeById(id){
   const n=nodeBy(id); if(!n) return;
   DB.ui.nodeId=id;
   DB.ui.entryId=null;
-  if(n.type!=='chapter'&&n.type!=='part'){
-    const p=treePath(n).find(x=>x.type==='chapter');
-    DB.ui.nodeId=p?p.id:n.id;
-  }
   DB.ui.tab='write';
   render();
   setTimeout(()=>{
@@ -3932,7 +3933,14 @@ const ACT={
   openFr(){ openFrModal(); },
   frPreview(){ frPaint(); },
   frRun(){ frApply(); },
-  addScene(el){ addNodeSmart('scene'); },
+  addScene(el){
+    const n=curNode();
+    if(n&&n.type==='scene'){
+      const p=treePath(n)[treePath(n).length-2];
+      if(p) DB.ui.nodeId=p.id;
+    }
+    addNodeSmart('scene');
+  },
   openNode(el){ openNodeById(el.dataset.id); },
   nodeMenu(){
     const n=curNode(); if(!n) return;
@@ -5153,7 +5161,12 @@ function toMarkdown(){
   L.push('','## 三、正文','');
   chapters().forEach(c=>{
     L.push('### '+c.title,'');
-    L.push(mdText(c.text)||'（未写）','');
+    if(c.text&&String(c.text).trim()) L.push(mdText(c.text),'');
+    children(c.id).filter(function(s){ return s.type==='scene'; }).forEach(function(s){
+      L.push('','#### '+(s.title||'未命名'),'');
+      L.push(mdText(s.text)||'（未写）');
+    });
+    L.push('');
   });
   if((DB.dialogues||[]).length){
     L.push('','## 四、对话','');
