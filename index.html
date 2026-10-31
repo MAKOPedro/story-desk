@@ -113,7 +113,7 @@ hr.sep{border:0;border-top:1px solid var(--line);margin:14px 0}
 .sheet .nodebar{display:flex;align-items:center;gap:8px;margin-bottom:14px;flex-wrap:wrap}
 .sheet input.title{font-family:var(--serif);font-size:25px;line-height:1.35;border:0;background:transparent;padding:0;margin-bottom:6px}
 .sheet input.title:focus{box-shadow:none;border:0}
-.sheet textarea.prose,.sheet .prose.edit{font-family:var(--serif);font-size:17px;line-height:2;border:0;background:transparent;padding:0;
+.sheet textarea.prose,.sheet .prose.edit{font-family:var(--write-font,var(--serif));font-size:var(--write-size,17px);line-height:2;border:0;background:transparent;padding:0;
   min-height:52vh;resize:none;margin-top:14px;letter-spacing:.01em;color:var(--ink);width:100%;outline:none}
 .sheet textarea.prose:focus,.sheet .prose.edit:focus{box-shadow:none;border:0}
 .sheet .foot{display:flex;align-items:center;gap:14px;margin-top:18px;padding-top:12px;border-top:1px solid var(--line);font-size:11.5px;color:var(--dim2)}
@@ -458,7 +458,7 @@ button,.btn,.nav button,.rit,.rfitem,.pcard,.mnode,.trow,.pitem,.rfkind,.rftag,.
 html[data-theme="night"]{--c-danger:#e0836f;--c-warn:#d9ab55;--c-ok:#86b394;--c-info:#8aa8d8;--c-mute:#9a9384}
 .redact{background:var(--ink);color:transparent;border-radius:2px;padding:0 2px;cursor:pointer}
 .redact.reveal{background:var(--sel);color:var(--ink);box-shadow:inset 0 -1px 0 var(--accent)}
-.preview.rich{white-space:pre-wrap;word-break:break-word}
+.preview.rich{white-space:pre-wrap;word-break:break-word;font-family:var(--write-font,var(--serif));font-size:var(--write-size,17px);line-height:2}
 .fmtbar{position:fixed;z-index:10060;display:none;align-items:center;gap:2px;padding:5px;
   background:var(--panel);border:1px solid var(--line2);border-radius:9px;box-shadow:0 10px 28px #3a2a1226}
 .fmtbar.on{display:flex}
@@ -1210,6 +1210,8 @@ function render(){
   }catch(e){}
   const NAVGAP=['chars','setup'];
   $('#nav').innerHTML=TABS.map(t=>((NAVGAP.indexOf(t[0])>=0||t[0]==='setup')?'<span class="navsep"></span>':'')+'<button data-act="tab" data-tab="'+t[0]+'"'+(DB.ui.tab===t[0]?' class="on"':'')+'>'+t[1]+'</button>').join('');
+  setTimeout(layoutGuard,0);
+  applyWriteStyle();
   const m={write:viewWrite,outline:viewOutline,plan:viewPlan,chars:viewChars,map:viewMap,items:viewItems,dlg:viewDlg,quest:viewQuest,lib:viewLib,refs:viewRefs,setup:viewSetup}[DB.ui.tab]||viewWrite;
   const oldWrap=$('#view .mapwrap');
   const keepX=oldWrap?oldWrap.scrollLeft:0, keepY=oldWrap?oldWrap.scrollTop:0;
@@ -1242,6 +1244,40 @@ function curDlg(){ return DB.ui.dlgId?((DB.dialogues||[]).find(x=>x.id===DB.ui.d
 function curQuest(){ return DB.ui.questId?((DB.quests||[]).find(x=>x.id===DB.ui.questId)||null):null; }
 
 /* ---------- 写作 ---------- */
+window.addEventListener('resize',function(){ setTimeout(layoutGuard,0); });
+const WRITE_FONTS=[
+  {k:'serif',n:'宋体',v:'"Songti SC","Source Han Serif SC","Noto Serif SC",Georgia,"Times New Roman",serif'},
+  {k:'sans',n:'黑体',v:'ui-sans-serif,system-ui,"PingFang SC","Microsoft YaHei",sans-serif'},
+  {k:'kai',n:'楷体',v:'"Kaiti SC",KaiTi,STKaiti,"Songti SC",serif'},
+  {k:'mono',n:'等宽',v:'ui-monospace,Consolas,"Sarasa Mono SC","Microsoft YaHei",monospace'}
+];
+function writeFontKey(){ return DB.ui&&DB.ui.font||'serif'; }
+function writeSize(){ const s=DB.ui&&DB.ui.fontSize; return (s>=12&&s<=30)?s:17; }
+function applyWriteStyle(){
+  try{
+    const f=(WRITE_FONTS.find(function(x){ return x.k===writeFontKey(); })||WRITE_FONTS[0]).v;
+    document.documentElement.style.setProperty('--write-font',f);
+    document.documentElement.style.setProperty('--write-size',writeSize()+'px');
+  }catch(e){}
+}
+function layoutGuard(){
+  try{
+    const w=document.querySelector('.write');
+    if(!w) return;
+    const main=w.querySelector('.main');
+    if(!main) return;
+    const mw=main.getBoundingClientRect().width;
+    if(mw<240){
+      w.style.gridTemplateColumns='minmax(0,1fr)';
+      const side=w.querySelector('.side'); if(side) side.style.display='none';
+      const ctx=w.querySelector('.ctx'); if(ctx) ctx.style.display='none';
+    }else{
+      w.style.gridTemplateColumns='';
+      const side=w.querySelector('.side'); if(side) side.style.display='';
+      const ctx=w.querySelector('.ctx'); if(ctx) ctx.style.display='';
+    }
+  }catch(e){}
+}
 function viewWrite(){
   const n=curNode();
   return '<div class="write'+(DB.ui.zen?' zen':'')+'">'
@@ -1289,6 +1325,12 @@ function sheetHTML(n){
   h+='<div class="nodebar"><span class="chip">'+typeLabel(n)+'</span>'
     +(trail?'<span class="chip">'+esc(trail)+'</span>':'')
     +'<div style="flex:1"></div>'
+    +'<select data-act="setFont" title="正文字体" style="width:70px;height:26px;font-size:12px;padding:0 4px;margin-right:2px">'
+      +WRITE_FONTS.map(function(f){ return '<option value="'+f.k+'"'+(writeFontKey()===f.k?' selected':'')+'>'+f.n+'</option>'; }).join('')
+    +'</select>'
+    +'<button class="btn sm ghost" data-act="fontSize" data-v="-1" title="字号减小">A−</button>'
+    +'<span class="mini" style="min-width:22px;text-align:center">'+writeSize()+'</span>'
+    +'<button class="btn sm ghost" data-act="fontSize" data-v="1" title="字号增大">A+</button>'
     +'<button class="btn sm ghost" data-act="preview">'+(DB.ui.preview?'编辑':'预览')+'</button>'
     +'<button class="btn sm ghost" data-act="pickImg" title="插入图片（也可直接粘贴或拖进正文）">图</button>'
     +'<button class="btn sm ghost" data-act="insertRef" title="插入 [[词条]] 引用">[[ ]]</button>'
@@ -4447,6 +4489,12 @@ const ACT={
     e.folderId=el.value||null; e.updatedAt=now(); touch(); render();
     toast(el.value?'已归类':'已移出文件夹');
   },
+  setFont(el){ DB.ui.font=el.value||'serif'; touch(); render(); },
+  fontSize(el){
+    const d=+el.dataset.v||0;
+    DB.ui.fontSize=Math.max(12,Math.min(30,writeSize()+d));
+    touch(); render();
+  },
   async saveVer(){
     const list=versions();
     const next=list.reduce((m,v)=>Math.max(m,v.n||0),0)+1;
@@ -5465,6 +5513,7 @@ document.addEventListener('change',e=>{
   const el=e.target;
   if(el.id==='ghToken'){ setToken(String(el.value||'').trim()); toast(el.value?'Token 已保存':'Token 已清除'); return; }
   if(el.dataset&&el.dataset.act==='setFolder'){ ACT.setFolder(el); return; }
+  if(el.dataset&&el.dataset.act==='setFont'){ ACT.setFont(el); return; }
   if(el.dataset&&el.dataset.evch){
     const ev=(DB.events||[]).find(x=>x.id===el.dataset.evch);
     if(ev){ ev.chapterId=el.value; touch(); }
