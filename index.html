@@ -1245,6 +1245,12 @@ function curQuest(){ return DB.ui.questId?((DB.quests||[]).find(x=>x.id===DB.ui.
 
 /* ---------- 写作 ---------- */
 window.addEventListener('resize',function(){ setTimeout(layoutGuard,0); });
+const FONT_MAP={
+  serif:'"Songti SC","Source Han Serif SC","Noto Serif SC",Georgia,serif',
+  sans:'ui-sans-serif,system-ui,"PingFang SC","Microsoft YaHei",sans-serif',
+  kai:'"Kaiti SC",KaiTi,STKaiti,"Songti SC",serif',
+  mono:'ui-monospace,Consolas,"Sarasa Mono SC",monospace'
+};
 const WRITE_FONTS=[
   {k:'serif',n:'宋体',v:'"Songti SC","Source Han Serif SC","Noto Serif SC",Georgia,"Times New Roman",serif'},
   {k:'sans',n:'黑体',v:'ui-sans-serif,system-ui,"PingFang SC","Microsoft YaHei",sans-serif'},
@@ -1470,7 +1476,7 @@ function parseRich(text){
         const tag=colon>=0?head.slice(0,colon):head;
         const arg=colon>=0?head.slice(colon+1):'';
         if(tag==='img'&&bar<0){ flush(); out.push({t:'img',id:arg.trim()}); i=end; continue; }
-        if(bar>=0&&(tag==='f'||tag==='c'||tag==='x')){
+        if(bar>=0&&(tag==='f'||tag==='c'||tag==='x'||tag==='font'||tag==='size')){
           flush();
           out.push({t:'style',k:tag,arg:arg.trim(),kids:parseRich(body)});
           i=end; continue;
@@ -1566,6 +1572,8 @@ function fmtApply(kind,val){
     const span=document.createElement('span');
     if(kind==='f'){ span.className='fmt'; span.dataset.f=val; span.setAttribute('style',fmtStyle(val)); }
     else if(kind==='c'){ span.className='fmt'; span.dataset.c=val; span.setAttribute('style','color:'+colorCSS(val)); }
+    else if(kind==='font'){ span.className='fmt'; span.dataset.font=val; span.setAttribute('style','font-family:'+(FONT_MAP[val]||'')); }
+    else if(kind==='size'){ span.className='fmt'; span.dataset.size=val; span.setAttribute('style','font-size:'+val+'px'); }
     else { span.className='redact reveal'; span.dataset.x=val||'soft'; }
     span.setAttribute('data-pending','1');
     span.appendChild(document.createTextNode('\u200b'));
@@ -1583,6 +1591,8 @@ function fmtApply(kind,val){
   const span=document.createElement('span');
   if(kind==='f'){ span.className='fmt'; span.dataset.f=val; span.setAttribute('style',fmtStyle(val)); }
   else if(kind==='c'){ span.className='fmt'; span.dataset.c=val; span.setAttribute('style','color:'+colorCSS(val)); }
+  else if(kind==='font'){ span.className='fmt'; span.dataset.font=val; span.setAttribute('style','font-family:'+(FONT_MAP[val]||'')); }
+  else if(kind==='size'){ span.className='fmt'; span.dataset.size=val; span.setAttribute('style','font-size:'+val+'px'); }
   else { span.className='redact'; span.dataset.x=val||'soft'; }
   span.appendChild(frag);
   r.insertNode(span);
@@ -1631,6 +1641,8 @@ function richHTML(text,opts){
     const kids=render(n.kids);
     if(n.k==='f') return '<span style="'+fmtStyle(n.arg)+'">'+kids+'</span>';
     if(n.k==='c'){ const c=colorCSS(n.arg); return c?'<span style="color:'+c+'">'+kids+'</span>':kids; }
+    if(n.k==='font'){ const ff=FONT_MAP[n.arg]; return ff?'<span style="font-family:'+ff+'">'+kids+'</span>':kids; }
+    if(n.k==='size'){ const sz=Math.max(10,Math.min(40,parseInt(n.arg,10)||0)); return sz?'<span style="font-size:'+sz+'px">'+kids+'</span>':kids; }
     const show=o.revealAll||(n.arg!=='seal'&&o.revealSoft);
     return '<span class="redact'+(show?' reveal':'')+'" data-x="'+esc(n.arg||'soft')+'">'+kids+'</span>';
   }).join('');
@@ -1644,6 +1656,8 @@ function nodesToCE(ns){
     const kids=nodesToCE(n.kids);
     if(n.k==='f') return '<span class="fmt" data-f="'+esc(n.arg)+'" style="'+fmtStyle(n.arg)+'">'+kids+'</span>';
     if(n.k==='c') return '<span class="fmt" data-c="'+esc(n.arg)+'" style="color:'+esc(colorCSS(n.arg))+'">'+kids+'</span>';
+    if(n.k==='font') return '<span class="fmt" data-font="'+esc(n.arg)+'" style="font-family:'+esc(FONT_MAP[n.arg]||'')+'">'+kids+'</span>';
+    if(n.k==='size') return '<span class="fmt" data-size="'+esc(n.arg)+'" style="font-size:'+esc(n.arg)+'px">'+kids+'</span>';
     const soft=(n.arg!=='seal');
     const show=soft&&DB.ui.showRedacted;
     return '<span class="redact'+(show?' reveal':'')+'" data-x="'+esc(n.arg||'soft')+'">'+kids+'</span>';
@@ -1665,6 +1679,7 @@ function richMarkdown(text){
       return s;
     }
     if(n.k==='c'){ const c=colorCSS(n.arg); return c?('<span style="color:'+c+'">'+kids+'</span>'):kids; }
+    if(n.k==='font'||n.k==='size') return kids;
     return '██████';
   }).join('');
   return render(parseRich(text));
@@ -3946,6 +3961,8 @@ const ACT={
   fmtColor(el){ fmtApply('c',el.dataset.v||'danger'); closeCtx(); },
   fmtRedact(){ fmtApply('x','soft'); closeCtx(); },
   fmtClear(){ fmtClear(); closeCtx(); },
+  fmtFont(el){ const v=el.value||''; closeCtx(); if(!v) return; fmtApply('font',v); },
+  fmtSize(el){ const v=el.value||''; closeCtx(); if(!v) return; fmtApply('size',v); },
   setRedacted(){ DB.ui.showRedacted=!DB.ui.showRedacted; touch(); render(); toast(DB.ui.showRedacted?'已显示涂黑内容':'已收起涂黑内容'); },
   setJump(el){
     const t=document.getElementById(el.dataset.v);
@@ -5116,6 +5133,8 @@ function ceToText(root){
       if(ds.x!=null){ const kx=ser(n); if(kx) out+='{{x:'+(ds.x||'soft')+'|'+kx+'}}'; continue; }
       if(ds.c!=null){ const kc=ser(n); if(kc) out+='{{c:'+ds.c+'|'+kc+'}}'; continue; }
       if(ds.f!=null){ const kf=ser(n); if(kf) out+='{{f:'+ds.f+'|'+kf+'}}'; continue; }
+      if(ds.font!=null){ const kfn=ser(n); if(kfn) out+='{{font:'+ds.font+'|'+kfn+'}}'; continue; }
+      if(ds.size!=null){ const ksn=ser(n); if(ksn) out+='{{size:'+ds.size+'|'+ksn+'}}'; continue; }
       const tag=n.tagName;
       if(tag==='BR'){ out+='\n'; continue; }
       if(tag==='DIV'||tag==='P'||tag==='LI'){ if(out&&out.slice(-1)!=='\n') out+='\n'; out+=ser(n); continue; }
@@ -5373,6 +5392,9 @@ function openCtx(x,y,items,sel){
   m.innerHTML=items.map(it=>{
     if(it.sep) return '<div class="sep"></div>';
     if(it.head!=null) return '<div class="mini">'+esc(it.head)+'</div>';
+    if(it.sel) return '<div style="padding:2px 4px 6px">'+'<select data-act="'+it.sel.act+'" style="width:100%;height:26px;font-size:12px">'
+      +it.sel.options.map(function(o){ return '<option value="'+esc(o.v)+'"'+(String(it.sel.value)===String(o.v)?' selected':'')+'>'+esc(o.n)+'</option>'; }).join('')
+      +'</select></div>';
     if(it.bar) return '<div class="ctxbar">'+it.bar.map(b=>'<button data-act="'+b.act+'"'+(b.v!=null?(' data-v="'+esc(b.v)+'"'):'')+' title="'+esc(b.title||'')+'"'+(b.color?(' style="color:'+b.color+'"'):'')+'>'+b.icon+'</button>').join('')+'</div>';
     return '<button data-act="'+it.act+'"'+(it.v!=null?(' data-v="'+esc(it.v)+'"'):'')+'><span class="ic">'+(it.icon||'')+'</span>'+esc(it.label)+'</button>';
   }).join('');
@@ -5407,6 +5429,12 @@ document.addEventListener('contextmenu',e=>{
       {act:'fmtRedact',icon:'█',title:'涂黑'},
       {act:'fmtClear',icon:'⌫',title:'清除格式'}
     ]});
+    items.push({sel:{act:'fmtFont',value:'',options:[
+      {v:'',n:'字体（不变）'},{v:'serif',n:'宋体'},{v:'sans',n:'黑体'},{v:'kai',n:'楷体'},{v:'mono',n:'等宽'}
+    ]}});
+    items.push({sel:{act:'fmtSize',value:'',options:[
+      {v:'',n:'字号（不变）'},{v:'12',n:'12 px'},{v:'14',n:'14 px'},{v:'16',n:'16 px'},{v:'18',n:'18 px'},{v:'20',n:'20 px'},{v:'24',n:'24 px'},{v:'28',n:'28 px'}
+    ]}});
     if(isProse&&!field){
       items.push({act:'ctxWrapRef',icon:'□',label:'变成引用 [[ ]]'});
       items.push({act:'ctxNewEntry',icon:'＋',label:'用这段文字新建词条'});
@@ -5514,6 +5542,8 @@ document.addEventListener('change',e=>{
   if(el.id==='ghToken'){ setToken(String(el.value||'').trim()); toast(el.value?'Token 已保存':'Token 已清除'); return; }
   if(el.dataset&&el.dataset.act==='setFolder'){ ACT.setFolder(el); return; }
   if(el.dataset&&el.dataset.act==='setFont'){ ACT.setFont(el); return; }
+  if(el.dataset&&el.dataset.act==='fmtFont'){ ACT.fmtFont(el); return; }
+  if(el.dataset&&el.dataset.act==='fmtSize'){ ACT.fmtSize(el); return; }
   if(el.dataset&&el.dataset.evch){
     const ev=(DB.events||[]).find(x=>x.id===el.dataset.evch);
     if(ev){ ev.chapterId=el.value; touch(); }
